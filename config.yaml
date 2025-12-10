@@ -1,0 +1,57 @@
+# config.yaml — DPM Strategy with Leveraged Execution
+# Signal: QQQ (clean, liquid)
+# Trade: FR0010342592 (Amundi Nasdaq-100 Daily (2x) Leveraged UCITS ETF Acc)
+
+assets:
+  - name: "Nasdaq-100 2x Leveraged"
+    signal_ticker: "QQQ"                    # Used only for TMOM + SMA signals
+    trade_ticker: "LQQ.PA"         # This is what we actually buy/sell (Paris listing)
+    benchmark_ticker: "QQQ"                 # Optional: for comparison in plot
+  - name: "QQQ"
+    signal_ticker: "QQQ"                    # Used only for TMOM + SMA signals
+    trade_ticker: "QQQ"         # This is what we actually buy/sell (Paris listing)
+    benchmark_ticker: "QQQ"                 # Optional: for comparison in plot
+  - name: "SPY"
+    signal_ticker: "SPY"                    # Used only for TMOM + SMA signals
+    trade_ticker: "SPY"         # This is what we actually buy/sell (Paris listing)
+    benchmark_ticker: "SPY"                 # Optional: for comparison in plot
+
+
+  # You can add more if you want (e.g. SPY + 2x version)
+  # - name: "S&P 500 2x"
+  #   signal_ticker: "SPY"
+  #   trade_ticker: "2SPY.PA"               # Example if exists
+  #   benchmark_ticker: "SPY"
+
+# Backtest period
+start_date: "2010-07-01"        # FR0010342592 launched in 2010
+end_date: "2025-12-31"
+
+# Strategy parameters
+run_sweep: False
+lookback: 15
+sma_period: 100
+#--- Best Parameters for Nasdaq-100 2x Leveraged ---
+#  Sharpe: 1.38 | CAGR: 41.64% | MaxDD: -34.63%
+#  Best Combo: TMOM=12m, SMA=100d
+#--- Best Parameters for QQQ ---
+#  Sharpe: 1.54 | CAGR: 24.01% | MaxDD: -16.46%
+#  Best Combo: TMOM=15m, SMA=100d
+#--- Best Parameters for SPY ---
+#  Sharpe: 1.45 | CAGR: 17.57% | MaxDD: -19.96%
+#  Best Combo: TMOM=15m, SMA=100d
+
+
+#tmom_lookbacks: [6, 9, 12, 15]
+#sma_periods: [100, 150, 200, 250]
+
+transaction_cost: 0.006         # 10 bps per rebalance (realistic for ETFs)
+rebalance_freq: 'M'             # 'M' monthly, 'W' weekly, 'D' daily
+
+# Execution & safety
+clear_cache: true              # Set to true only if you want fresh data
+output_dir: "./results"
+
+# Optional: dry-run trading later (for future broker integration)
+dry_run: true
+broker: "none"                  # Will be "ibkr" or "boursorama" later
