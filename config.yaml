@@ -6,7 +6,7 @@ assets:
   - name: "Nasdaq-100 2x Leveraged"
     signal_ticker: "QQQ"                    # Used only for TMOM + SMA signals
     trade_ticker: "LQQ.PA"         # This is what we actually buy/sell (Paris listing)
-    benchmark_ticker: "QQQ"                 # Optional: for comparison in plot
+    benchmark_ticker: "LQQ.PA"                 # Optional: for comparison in plot
   - name: "QQQ"
     signal_ticker: "QQQ"                    # Used only for TMOM + SMA signals
     trade_ticker: "QQQ"         # This is what we actually buy/sell (Paris listing)
@@ -29,8 +29,10 @@ end_date: "2025-12-31"
 
 # Strategy parameters
 run_sweep: False
-lookback: 15
+lookback: 12
 sma_period: 100
+algo_mode: 'Conditional'
+
 #--- Best Parameters for Nasdaq-100 2x Leveraged ---
 #  Sharpe: 1.38 | CAGR: 41.64% | MaxDD: -34.63%
 #  Best Combo: TMOM=12m, SMA=100d

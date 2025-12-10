@@ -1,4 +1,4 @@
-### DPM Strategy — Decoupled Logic (with Parameter Sweep & Config Control)
+### DPM Strategy — Configurable Algo (Linear vs Conditional)
 
 import pandas as pd
 import numpy as np
@@ -73,11 +73,80 @@ class SMASignal(SignalGenerator):
 class DPMAllocator:
     def __init__(self, signals: Dict[str, SignalGenerator]):
         self.signals = signals
+    def allocate(self, signal_prices: pd.DataFrame, rf_rates: pd.Series, tmom_lb: int, sma_p: int, method: str) -> pd.Series:
+        """
+        Determines the daily allocation based on TMOM and SMA signals.
+        
+        This method uses forward-filled signals to ensure daily re-evaluation
+        and calculates the new allocation based on the previous day's allocation
+        and the signals, enforcing the chosen logic (Linear or Conditional).
+        """
+        
+        # 1. Compute Signals
+        tmom_sig = TMOMSignal().compute_signal(signal_prices, rf_rates=rf_rates, lookback=tmom_lb)
+        sma_sig  = SMASignal().compute_signal(signal_prices, sma_period=sma_p)
 
-    def allocate(self, prices: pd.Series, rf_rates: pd.Series, lookback: int, sma_period: int) -> pd.Series:
-        tmom = self.signals['TMOM'].compute_signal(prices, rf_rates=rf_rates, lookback=lookback)
-        sma  = self.signals['SMA'].compute_signal(prices, sma_period=sma_period)
-        return (tmom + sma) / 2.0
+        # Re-index and align signals to the daily pricing index
+        daily_tmom_sig = tmom_sig.reindex(signal_prices.index, method='ffill').fillna(0)
+        daily_sma_sig  = sma_sig.reindex(signal_prices.index, method='ffill').fillna(0)
+
+        # 2. Initialization and Setup
+        allocations = pd.Series(0.0, index=signal_prices.index)
+        allocations.iloc[0] = 0.0 # Start with 0 allocation
+        
+        # Store previous allocation (1 day lag)
+        prev_alloc = allocations.shift(1).fillna(0.0)
+        
+        # Mapping from allocation float to state key
+        alloc_to_state = {1.0: 'Invested', 0.5: 'Partial', 0.0: 'Cash'}
+        
+        if method == 'Linear':
+            # Simple linear allocation: (M + S) / 2
+            allocations = (daily_tmom_sig + daily_sma_sig) / 2.0
+            
+        elif method == 'Conditional':
+            
+            # --- CONDITIONAL STATE MACHINE IMPLEMENTATION ---
+            
+            # Define the 12-state transition map based on your logic:
+            # Key: (Previous_State, SMA_Signal, TMOM_Signal) -> New_Allocation_Value
+            state_machine = {
+                # From Cash (0.0): S=0 blocks re-entry (Persistence Filter)
+                ('Cash', 0, 0): 0.0, ('Cash', 0, 1): 0.0, 
+                ('Cash', 1, 1): 1.0, ('Cash', 1, 0): 0.5,
+                
+                # From Partial (0.5): S=0 forces exit (Asymmetric Exit)
+                ('Partial', 0, 0): 0.0, ('Partial', 0, 1): 0.0,
+                ('Partial', 1, 1): 1.0, ('Partial', 1, 0): 0.5,
+                
+                # From Invested (1.0): S=0 forces exit (Asymmetric Exit)
+                ('Invested', 0, 0): 0.0, ('Invested', 0, 1): 0.0,
+                ('Invested', 1, 1): 1.0, ('Invested', 1, 0): 0.5,
+            }
+
+            # Apply the state machine daily starting from the second day
+            for i in range(1, len(allocations)):
+                # Get the previous day's final allocation (which is the current state)
+                p_prev = allocations.iloc[i-1] 
+                
+                # Convert the previous allocation value to the state string
+                # We need to handle potential floating point errors by rounding
+                p_prev_state = alloc_to_state.get(round(p_prev, 1))
+
+                # Get current signals
+                s_sig = daily_sma_sig.iloc[i]
+                m_sig = daily_tmom_sig.iloc[i]
+                
+                # Look up the new allocation in the state machine
+                transition_key = (p_prev_state, s_sig, m_sig)
+                
+                # Default safety: if key is not found (should not happen), keep 0.0
+                allocations.iloc[i] = state_machine.get(transition_key, 0.0)
+
+        else:
+            raise ValueError(f"Unknown allocation method: {method}. Must be 'Linear' or 'Conditional'.")
+
+        return allocations.dropna()
 
 class PortfolioSimulator:
     def __init__(self, transaction_cost: float = 0.001):
@@ -118,11 +187,14 @@ class PerformanceAnalyzer:
 
     def plot_professional_report(self, equity: pd.Series, benchmark: pd.Series,
                                 pos_numeric: pd.Series, alloc: pd.Series,
-                                tmom_sig: pd.Series, sma_sig: pd.Series,
                                 signal_prices: pd.Series,
-                                drawdown: pd.Series, # <-- NEW PARAMETER: Drawdown series
+                                drawdown: pd.Series, 
+                                rf: pd.Series, 
+                                tmom_sig: pd.Series, 
+                                sma_sig: pd.Series,  
                                 asset_name: str, output_path: str,
-                                tmom_lookback: int, sma_period: int):
+                                tmom_lookback: int, sma_period: int,
+                                algo_mode: str): # Added algo_mode for Title
         
         if len(equity) == 0:
             logging.warning(f"No data for {asset_name} — skipping plot")
@@ -133,8 +205,13 @@ class PerformanceAnalyzer:
         
         last_date = equity.index[-1]
         current_alloc = alloc.iloc[-1]
-        current_tmom = int(tmom_sig.iloc[-1])
-        current_sma = int(sma_sig.iloc[-1])
+        
+        # Re-calculate raw signals for display purposes (Status Box)
+        raw_tmom_sig = TMOMSignal().compute_signal(signal_prices, rf_rates=rf, lookback=tmom_lookback).reindex(alloc.index, method='ffill').fillna(0)
+        raw_sma_sig = SMASignal().compute_signal(signal_prices, sma_period=sma_period).reindex(alloc.index, method='ffill').fillna(0)
+        
+        current_tmom = int(raw_tmom_sig.iloc[-1])
+        current_sma = int(raw_sma_sig.iloc[-1])
         
         if current_alloc == 1:
             current_pos = "INVESTED"
@@ -145,45 +222,41 @@ class PerformanceAnalyzer:
         else:
             current_pos = "CASH"
             color_pos = "lightcoral"
-
-        # Change figure height to accommodate 3 plots
+            
         fig = plt.figure(figsize=(16, 12)) 
-        # Set up a 3-row grid: [Equity Curve (4), Drawdown (1.5), Position (1.5)]
         gs = fig.add_gridspec(3, 1, height_ratios=[4, 1.5, 1.5], hspace=0.3) 
 
-        # --- Subplot 1: Equity Curve, Price, and SMA ---
+        # --- Subplot 1: Equity Curve ---
         ax1 = fig.add_subplot(gs[0])
-        ax1.plot(equity.index, equity, label='DPM Strategy', color='tab:blue', lw=2.5)
+        ax1.plot(equity.index, equity, label=f'DPM Strategy ({algo_mode})', color='tab:blue', lw=2.5)
         ax1.plot(benchmark.index, benchmark, label='Buy & Hold', color='black', lw=1.5, alpha=0.7)
         ax1_price = ax1.twinx()
         
-        # Plot the SMA and Price on the secondary Y-axis (ax1_price)
         ax1_price.plot(signal_prices.index, signal_prices, label=f'Signal Price ({asset_name})', color='green', lw=1.0, alpha=0.5)
         ax1_price.plot(daily_sma.index, daily_sma, label=f'{sma_period}D SMA', color='red', linestyle='--', lw=1.5)
         ax1_price.set_ylabel(f'Signal Asset Price ({asset_name})', fontsize=12, color='black')
         
-        # Combine legends
         lines, labels = ax1.get_legend_handles_labels()
         lines2, labels2 = ax1_price.get_legend_handles_labels()
         ax1.legend(lines + lines2, labels + labels2, fontsize=13, loc='upper left')
         
         ax1.set_yscale('log')
-        ax1.set_title(f'{asset_name} (DPM Signals)', fontsize=18, fontweight='bold', pad=20)
+        ax1.set_title(f'{asset_name} (DPM Signals - {algo_mode} Logic)', fontsize=18, fontweight='bold', pad=20)
         ax1.set_ylabel('Portfolio Value (log scale)', fontsize=12)
         ax1.grid(alpha=0.3)
-        plt.setp(ax1.get_xticklabels(), visible=False) # Remove X-axis labels
+        plt.setp(ax1.get_xticklabels(), visible=False) 
 
-        # --- Subplot 2: Max Drawdown Over Time (NEW) ---
+        # --- Subplot 2: Max Drawdown ---
         ax2 = fig.add_subplot(gs[1], sharex=ax1) 
         ax2.fill_between(drawdown.index, 0, drawdown, color='tab:red', alpha=0.6)
         ax2.set_title('Max Drawdown Over Time', fontsize=13)
         ax2.set_ylabel('Drawdown', fontsize=12)
         ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y:.1%}'))
         ax2.grid(alpha=0.3)
-        ax2.set_ylim(1.1 * drawdown.min(), 0.05) # Set Y-limit below 0
-        plt.setp(ax2.get_xticklabels(), visible=False) # Remove X-axis labels
+        ax2.set_ylim(1.1 * drawdown.min(), 0.05)
+        plt.setp(ax2.get_xticklabels(), visible=False) 
         
-        # --- Subplot 3: Position Over Time (MODIFIED AX3) ---
+        # --- Subplot 3: Position Over Time ---
         ax3 = fig.add_subplot(gs[2], sharex=ax1) 
         ax3.fill_between(pos_numeric.index, 0, 1, where=pos_numeric==0, color='lightcoral', alpha=0.8)
         ax3.fill_between(pos_numeric.index, 1, 1.5, where=pos_numeric==1, color='orange', alpha=0.8)
@@ -196,7 +269,24 @@ class PerformanceAnalyzer:
         ax3.set_xlabel('Date', fontsize=12)
         ax3.grid(alpha=0.3)
 
-        # Red lines at actual trades (now applied to all three subplots)
+        # Label Orange Rectangles
+        df_signals = pd.DataFrame({
+            'alloc': alloc,
+            'T': tmom_sig.reindex(alloc.index, method='ffill').fillna(0),
+            'S': sma_sig.reindex(alloc.index, method='ffill').fillna(0)
+        }).dropna()
+        
+        for date, row in df_signals.resample('W-MON').first().dropna().iterrows():
+            if row['alloc'] == 0.5: 
+                if row['T'] == 1.0: 
+                    label = 'M' 
+                elif row['S'] == 1.0:
+                    label = 'S' 
+                else:
+                    continue 
+                ax3.text(date, 1.25, label, fontsize=9, fontweight='bold', color='black', ha='center', va='center') 
+
+        # Red lines at trades 
         change_dates = alloc.diff().abs() > 0.01
         change_dates = change_dates[change_dates].index
         for date in change_dates:
@@ -204,7 +294,7 @@ class PerformanceAnalyzer:
             ax2.axvline(date, color='red', alpha=0.6, linestyle='--', linewidth=1.2)
             ax3.axvline(date, color='red', alpha=0.6, linestyle='--', linewidth=1.2)
 
-        # KPI table below legend
+        # KPI table
         metrics = self.analyze(equity)
         time_in_market = (alloc > 0).mean()
         kpi = [
@@ -224,12 +314,13 @@ class PerformanceAnalyzer:
                 cell.set_facecolor('#204680')
                 cell.set_text_props(color='white', weight='bold')
 
-        # Current status box
+        # Status box
         status_text = (
             f"Current Position\n"
             f"{current_pos}\n\n"
-            f"TMOM Signal: {'Bullish' if current_tmom else 'Bearish'}\n"
-            f"SMA Signal : {'Above MA' if current_sma else 'Below MA'}\n"
+            f"Logic: {algo_mode}\n"
+            f"Raw TMOM Sig: {'Bullish' if current_tmom else 'Bearish'}\n"
+            f"Raw SMA Sig : {'Above MA' if current_sma else 'Below MA'}\n"
             f"TMOM Lookback: {tmom_lookback} months\n"
             f"SMA Period: {sma_period} days\n"
             f"Last update: {last_date.strftime('%Y-%m-%d')}"
@@ -242,15 +333,16 @@ class PerformanceAnalyzer:
                  bbox=dict(boxstyle="round,pad=0.6", facecolor=color_pos, alpha=0.9),
                  linespacing=1.4)
 
-        plt.suptitle('Downside Protection Model — Clean & Professional Report',
+        plt.suptitle(f'Downside Protection Model — {algo_mode} Logic (Labeled)',
                      fontsize=20, fontweight='bold', y=0.95)
         plt.subplots_adjust(top=0.92, bottom=0.06, left=0.06, right=0.96)
-        plt.savefig(os.path.join(output_path, f'{asset_name}_DPM_clean_report_{tmom_lookback}m_{sma_period}d_with_dd.png'),
-                    dpi=300, bbox_inches='tight', facecolor='white') # Added _with_dd for new file name
+        plt.savefig(os.path.join(output_path, f'{asset_name}_DPM_{algo_mode}_{tmom_lookback}m_{sma_period}d_labeled.png'),
+                    dpi=300, bbox_inches='tight', facecolor='white') 
         plt.close()
 
 
 def main(config_path: str = 'config.yaml'):
+    global rf 
     try:
         with open(config_path, 'r') as f:
             config = yaml.safe_load(f)
@@ -258,17 +350,15 @@ def main(config_path: str = 'config.yaml'):
         logging.warning(f"Config file not found at {config_path}. Using default settings.")
         config = {}
 
-    run_sweep = config.get('run_sweep', True)
+    run_sweep = config.get('run_sweep', False)
+    algo_mode = config.get('algo_mode', 'Conditional') # Default to Conditional if missing
     
-    # Define the parameter ranges for sweep mode
     tmom_lookbacks = config.get('tmom_lookbacks', [6, 9, 12, 15])
     sma_periods = config.get('sma_periods', [100, 150, 200, 250])
     
-    # Define single run parameters (used if run_sweep=False)
-    single_tmom_lb = config.get('lookback', 12)
+    single_tmom_lb = config.get('lookback', 15)
     single_sma_p = config.get('sma_period', 100)
     
-    # Define assets to trade
     default_assets = [
         {'signal_ticker': 'QQQ', 'trade_ticker': 'LQQ.PA', 'benchmark_ticker': 'QQQ', 'name': 'Nasdaq-100 2x Leveraged'},
         {'signal_ticker': 'QQQ', 'trade_ticker': 'QQQ', 'benchmark_ticker': 'QQQ', 'name': 'QQQ'},
@@ -276,7 +366,6 @@ def main(config_path: str = 'config.yaml'):
     ]
     assets = config.get('assets', default_assets)
     
-    # Global backtest settings
     start = config.get('start_date', '2010-07-01')
     end = config.get('end_date', datetime.now().strftime('%Y-%m-%d'))
     tc = config.get('transaction_cost', 0.001)
@@ -289,23 +378,18 @@ def main(config_path: str = 'config.yaml'):
     simulator = PortfolioSimulator(transaction_cost=tc)
     analyzer = PerformanceAnalyzer()
     
-    # --- Data Pre-fetching (Optimization) ---
     all_tickers = set([a['signal_ticker'] for a in assets] + [a['trade_ticker'] for a in assets] + [a['benchmark_ticker'] for a in assets])
     for ticker in all_tickers:
         fetcher.fetch_data(ticker, start, end)
-    rf = fetcher.fetch_risk_free(start, end)
+    rf = fetcher.fetch_risk_free(start, end) 
 
     if run_sweep:
-        # (Sweep logic remains the same)
-        # Switch logging to ERROR during sweep to minimize console output
         logging.getLogger().setLevel(logging.ERROR)
-        
         print("\n" + "="*80)
         print(f"DPM STRATEGY PARAMETER SWEEP INITIALIZED")
+        print(f"ALGO MODE: {algo_mode}")
         print(f"TMOM Lookback Range (Months): {tmom_lookbacks}")
         print(f"SMA Period Range (Days): {sma_periods}")
-        print(f"Total Runs Per Asset: {len(tmom_lookbacks) * len(sma_periods)}")
-        print(f"Total Assets: {len(assets)}")
         print("="*80)
         
         all_results = []
@@ -319,30 +403,17 @@ def main(config_path: str = 'config.yaml'):
             
             print(f"\n--- Running Sweep for Asset: {name} ({trade_ticker}) ---")
 
-            # Load pre-fetched data
             signal_prices = fetcher.fetch_data(signal_ticker, start, end)['Close']
             trade_prices = fetcher.fetch_data(trade_ticker, start, end)['Close']
-            bench_data = fetcher.fetch_data(benchmark_ticker, start, end)
             asset_ret = trade_prices.pct_change().fillna(0)
             
-            bench_ret = bench_data['Close'].pct_change().fillna(0)
-            benchmark = (1 + bench_ret).cumprod()
-            
-            # Iterate over all parameter combinations
             for tmom_lb, sma_p in itertools.product(tmom_lookbacks, sma_periods):
-                # Generate signals
-                tmom_sig = TMOMSignal().compute_signal(signal_prices, rf_rates=rf, lookback=tmom_lb)
-                sma_sig  = SMASignal().compute_signal(signal_prices, sma_period=sma_p)
-                allocations = (tmom_sig + sma_sig) / 2.0
+                # Pass algo_mode here
+                allocations = allocator.allocate(signal_prices, rf, tmom_lb, sma_p, method=algo_mode)
 
-                # Simulate
                 results = simulator.simulate(allocations, asset_ret, rf)
-                equity = results['equity_curve']
-                
-                # Analyze
-                metrics = analyzer.analyze(equity)
+                metrics = analyzer.analyze(results['equity_curve'])
 
-                # Store results
                 all_results.append({
                     'Asset': name,
                     'TMOM_LB (m)': tmom_lb,
@@ -352,53 +423,38 @@ def main(config_path: str = 'config.yaml'):
                     'MaxDD (%)': metrics['MaxDD'] * 100,
                 })
                 
-        # --- FINAL REPORT ---
         if not all_results:
-            print("\nNo results collected. Check data fetching and start/end dates.")
+            print("\nNo results collected.")
             return
 
         results_df = pd.DataFrame(all_results)
-        
-        # Sort by Sharpe Ratio to find the best-performing parameters
         results_df = results_df.sort_values(by=['Asset', 'Sharpe'], ascending=[True, False]).reset_index(drop=True)
 
         print("\n" + "="*100)
-        print("✨ DPM STRATEGY PARAMETER SWEEP RESULTS (Sorted by Sharpe Ratio) ✨")
+        print(f"✨ DPM STRATEGY SWEEP RESULTS ({algo_mode}) ✨")
         print("="*100)
         
-        # Print individual tables for each asset, highlighting the best one
         for asset_name in results_df['Asset'].unique():
             asset_table = results_df[results_df['Asset'] == asset_name]
-            
-            # Get best-performing row
             best_row = asset_table.iloc[0]
-            
             print(f"\n--- Best Parameters for {asset_name} ---")
             print(f"  Sharpe: {best_row['Sharpe']:.2f} | CAGR: {best_row['CAGR (%)']:.2f}% | MaxDD: {best_row['MaxDD (%)']:.2f}%")
             print(f"  Best Combo: TMOM={best_row['TMOM_LB (m)']}m, SMA={best_row['SMA_P (d)']}d")
             print("-" * 35)
-
-            print(asset_table[['TMOM_LB (m)', 'SMA_P (d)', 'Sharpe', 'CAGR (%)', 'MaxDD (%)']].to_string(
-                index=False, float_format=lambda x: f'{x:.2f}'
-            ))
+            print(asset_table[['TMOM_LB (m)', 'SMA_P (d)', 'Sharpe', 'CAGR (%)', 'MaxDD (%)']].to_string(index=False, float_format=lambda x: f'{x:.2f}'))
             
-    # --- SINGLE OPTIMIZED PLOT MODE (FIXED TO LOOP OVER ALL ASSETS) ---
     else:
-        # Ensure logging is at INFO level for single run feedback
         logging.getLogger().setLevel(logging.INFO)
-        
-        # Use single run parameters from config
         tmom_lb = single_tmom_lb
         sma_p = single_sma_p
         
         print("\n" + "="*80)
         print(f"RUNNING SINGLE OPTIMIZED REPORT MODE")
-        print(f"PARAMETERS (Applied to All Assets): TMOM={tmom_lb} months, SMA={sma_p} days")
+        print(f"ALGO MODE: {algo_mode}")
+        print(f"PARAMETERS: TMOM={tmom_lb} months, SMA={sma_p} days")
         print("="*80)
 
-        # FIX: Iterate through all assets defined in the config
         for asset_config in assets:
-            
             signal_ticker = asset_config['signal_ticker']
             trade_ticker = asset_config['trade_ticker']
             benchmark_ticker = asset_config.get('benchmark_ticker', trade_ticker)
@@ -406,50 +462,60 @@ def main(config_path: str = 'config.yaml'):
             
             print(f"\n--- Processing Asset: {name} ({trade_ticker}) ---")
 
-            # Load pre-fetched data
             signal_prices = fetcher.fetch_data(signal_ticker, start, end)['Close']
             trade_prices = fetcher.fetch_data(trade_ticker, start, end)['Close']
             bench_data = fetcher.fetch_data(benchmark_ticker, start, end)
             asset_ret = trade_prices.pct_change().fillna(0)
-            
             bench_ret = bench_data['Close'].pct_change().fillna(0)
             benchmark = (1 + bench_ret).cumprod()
 
-            # Generate signals
+            # Pass algo_mode here
+            allocations = allocator.allocate(signal_prices, rf, tmom_lb, sma_p, method=algo_mode)
+            
             tmom_sig = TMOMSignal().compute_signal(signal_prices, rf_rates=rf, lookback=tmom_lb)
             sma_sig  = SMASignal().compute_signal(signal_prices, sma_period=sma_p)
-            allocations = (tmom_sig + sma_sig) / 2.0
 
-            # Simulate
+            # Combine signals and allocations into a diagnostic DataFrame
+            diagnostic_df = pd.DataFrame({
+                'allocation': allocations,
+                # Align signals to the allocation index
+                'tmom_sig': tmom_sig.reindex(allocations.index, method='ffill').fillna(0),
+                'sma_sig': sma_sig.reindex(allocations.index, method='ffill').fillna(0)
+            }).dropna()
+
+            # Export the diagnostic data
+            diagnostic_file_name = f'{name}_{algo_mode}_{tmom_lb}m_{sma_p}d_diagnostic_signals.csv'
+            diagnostic_df.to_csv(os.path.join(out_dir, diagnostic_file_name))
+            
+            logging.info(f"Saved diagnostic signals to: {diagnostic_file_name}")
+
             results = simulator.simulate(allocations, asset_ret, rf)
             equity = results['equity_curve']
-            
-            # CALCULATE DRAWDOWN SERIES (NEW)
             drawdown = equity / equity.cummax() - 1 
             
-            # Analyze and Log
             metrics = analyzer.analyze(equity)
             logging.info(f"{name} → CAGR {metrics['CAGR']:.2%} | MaxDD {metrics['MaxDD']:.1%} | Sharpe {metrics['Sharpe']:.2f}")
 
-            # Plot the professional report
             analyzer.plot_professional_report(
                 equity=equity,
                 benchmark=benchmark,
                 pos_numeric=results['position_numeric'],
                 alloc=results['allocations'],
-                tmom_sig=tmom_sig,
-                sma_sig=sma_sig,
                 signal_prices=signal_prices,
-                drawdown=drawdown, # <-- Pass new drawdown series
+                drawdown=drawdown, 
+                rf=rf,
+                tmom_sig=tmom_sig, 
+                sma_sig=sma_sig,  
                 asset_name=name,
                 output_path=out_dir,
                 tmom_lookback=tmom_lb,
-                sma_period=sma_p
+                sma_period=sma_p,
+                algo_mode=algo_mode # Pass algo_mode for title
             )
             
-            # Export allocations to CSV
-            results[['equity_curve', 'position_numeric', 'allocations']].to_csv(os.path.join(out_dir, f'{name}_full_simulation_data.csv'))
-
+            results[['equity_curve', 'position_numeric', 'allocations']].to_csv(
+                os.path.join(out_dir, f'{name}_{algo_mode}_full_data.csv')
+            )
 
 if __name__ == '__main__':
     main()
