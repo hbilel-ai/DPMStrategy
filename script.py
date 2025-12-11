@@ -269,168 +269,263 @@ class TradeTracker:
 class PerformanceAnalyzer:
     def analyze(self, equity: pd.Series) -> Dict:
         if len(equity) < 2:
-            return {'CAGR': np.nan, 'MaxDD': np.nan, 'Sharpe': np.nan}
+            return {'CAGR': np.nan, 'MaxDD': np.nan, 'Sharpe': np.nan, 'Vol': np.nan, 'Longest DD (Days)': 0}
         years = (equity.index[-1] - equity.index[0]).days / 365.25
         cagr = (equity.iloc[-1] / equity.iloc[0]) ** (1/years) - 1
+        # Max Drawdown
         dd = (equity / equity.cummax() - 1).min()
+        # Returns for Volatility and Sharpe
         ret = equity.pct_change().dropna()
+        # Annualized Volatility
+        volatility = ret.std() * np.sqrt(252)
+        # Sharpe Ratio
         sharpe = ret.mean() / ret.std() * np.sqrt(252) if ret.std() != 0 else np.nan
-        return {'CAGR': cagr, 'MaxDD': dd, 'Sharpe': sharpe}
-
-    def plot_professional_report(self, equity: pd.Series, benchmark: pd.Series,
-                                pos_numeric: pd.Series, alloc: pd.Series,
-                                signal_prices: pd.Series,
-                                drawdown: pd.Series, 
-                                rf: pd.Series, 
-                                tmom_sig: pd.Series, 
-                                sma_sig: pd.Series,  
-                                asset_name: str, output_path: str,
-                                tmom_lookback: int, sma_period: int,
-                                algo_mode: str): # Added algo_mode for Title
-        
-        if len(equity) == 0:
-            logging.warning(f"No data for {asset_name} — skipping plot")
-            return
-        
-        # --- SMA Calculation for Plotting (Daily SMA) ---
-        daily_sma = signal_prices.rolling(window=sma_period).mean() 
-        
-        last_date = equity.index[-1]
-        current_alloc = alloc.iloc[-1]
-        
-        # Re-calculate raw signals for display purposes (Status Box)
-        raw_tmom_sig = TMOMSignal().compute_signal(signal_prices, rf_rates=rf, lookback=tmom_lookback).reindex(alloc.index, method='ffill').fillna(0)
-        raw_sma_sig = SMASignal().compute_signal(signal_prices, sma_period=sma_period).reindex(alloc.index, method='ffill').fillna(0)
-        
-        current_tmom = int(raw_tmom_sig.iloc[-1])
-        current_sma = int(raw_sma_sig.iloc[-1])
-        
-        if current_alloc == 1:
-            current_pos = "INVESTED"
-            color_pos = "lightgreen"
-        elif current_alloc == 0.5:
-            current_pos = "PARTIAL"
-            color_pos = "orange"
+        # Longest Drawdown Cycle in Days (Peak to Peak)
+        peaks = equity.cummax()
+        peak_dates = equity[equity == peaks].index
+        if len(peak_dates) > 1:
+            # Duration between consecutive peaks (length of drawdown cycle)
+            dd_durations = peak_dates.to_series().diff().dt.days
+            longest_dd_days = int(dd_durations.max()) if not dd_durations.empty else 0
         else:
-            current_pos = "CASH"
-            color_pos = "lightcoral"
-            
-        fig = plt.figure(figsize=(16, 12)) 
-        gs = fig.add_gridspec(3, 1, height_ratios=[4, 1.5, 1.5], hspace=0.3) 
+            longest_dd_days = 0
 
-        # --- Subplot 1: Equity Curve ---
-        ax1 = fig.add_subplot(gs[0])
-        ax1.plot(equity.index, equity, label=f'DPM Strategy ({algo_mode})', color='tab:blue', lw=2.5)
-        ax1.plot(benchmark.index, benchmark, label='Buy & Hold', color='black', lw=1.5, alpha=0.7)
-        ax1_price = ax1.twinx()
-        
-        ax1_price.plot(signal_prices.index, signal_prices, label=f'Signal Price ({asset_name})', color='green', lw=1.0, alpha=0.5)
-        ax1_price.plot(daily_sma.index, daily_sma, label=f'{sma_period}D SMA', color='red', linestyle='--', lw=1.5)
-        ax1_price.set_ylabel(f'Signal Asset Price ({asset_name})', fontsize=12, color='black')
-        
-        lines, labels = ax1.get_legend_handles_labels()
-        lines2, labels2 = ax1_price.get_legend_handles_labels()
-        ax1.legend(lines + lines2, labels + labels2, fontsize=13, loc='upper left')
-        
-        ax1.set_yscale('log')
-        ax1.set_title(f'{asset_name} (DPM Signals - {algo_mode} Logic)', fontsize=18, fontweight='bold', pad=20)
-        ax1.set_ylabel('Portfolio Value (log scale)', fontsize=12)
-        ax1.grid(alpha=0.3)
-        plt.setp(ax1.get_xticklabels(), visible=False) 
+        return {
+            'CAGR': cagr,
+            'MaxDD': dd,
+            'Sharpe': sharpe,
+            'Vol': volatility,
+            'Longest DD (Days)': longest_dd_days
+        }
 
-        # --- Subplot 2: Max Drawdown ---
-        ax2 = fig.add_subplot(gs[1], sharex=ax1) 
-        ax2.fill_between(drawdown.index, 0, drawdown, color='tab:red', alpha=0.6)
-        ax2.set_title('Max Drawdown Over Time', fontsize=13)
-        ax2.set_ylabel('Drawdown', fontsize=12)
-        ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y:.1%}'))
-        ax2.grid(alpha=0.3)
-        ax2.set_ylim(1.1 * drawdown.min(), 0.05)
-        plt.setp(ax2.get_xticklabels(), visible=False) 
-        
-        # --- Subplot 3: Position Over Time ---
-        ax3 = fig.add_subplot(gs[2], sharex=ax1) 
-        ax3.fill_between(pos_numeric.index, 0, 1, where=pos_numeric==0, color='lightcoral', alpha=0.8)
-        ax3.fill_between(pos_numeric.index, 1, 1.5, where=pos_numeric==1, color='orange', alpha=0.8)
-        ax3.fill_between(pos_numeric.index, 1.5, 2, where=pos_numeric==2, color='lightgreen', alpha=0.8)
-        ax3.step(pos_numeric.index, pos_numeric, where='post', color='black', lw=1.5)
-        ax3.set_yticks([0, 1, 2])
-        ax3.set_yticklabels(['CASH', 'PARTIAL', 'INVESTED'], fontweight='bold', fontsize=12)
-        ax3.set_ylim(-0.1, 2.1)
-        ax3.set_title('Position Over Time', fontsize=13)
-        ax3.set_xlabel('Date', fontsize=12)
-        ax3.grid(alpha=0.3)
+    def plot_professional_report(self, equity: pd.Series, benchmark: pd.Series, pos_numeric: pd.Series, alloc: pd.Series,
+                                 signal_prices: pd.Series, drawdown: pd.Series, rf: pd.Series, tmom_sig: pd.Series, sma_sig: pd.Series,
+                                 asset_name: str, output_path: str, tmom_lookback: int, sma_period: int, algo_mode: str,
+                                 metrics: Dict[str, float], monthly_returns_df: pd.DataFrame):
+        """
+        Generates a professional-style report PDF with multiple panels and tables.
+        Includes a Dashboard and color-coded Monthly Returns.
+        """
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import os
+        import logging
+        from typing import Dict
 
-        # Label Orange Rectangles
-        df_signals = pd.DataFrame({
-            'alloc': alloc,
-            'T': tmom_sig.reindex(alloc.index, method='ffill').fillna(0),
-            'S': sma_sig.reindex(alloc.index, method='ffill').fillna(0)
-        }).dropna()
-        
-        for date, row in df_signals.resample('W-MON').first().dropna().iterrows():
-            if row['alloc'] == 0.5: 
-                if row['T'] == 1.0: 
-                    label = 'M' 
-                elif row['S'] == 1.0:
-                    label = 'S' 
+        # Set up the figure
+        fig = plt.figure(figsize=(11.5, 16.5))
+
+        # --- REDEFINED GRID (11 rows, 4 columns) for new layout ---
+        ax_monthly = plt.subplot2grid((11, 4), (0, 0), rowspan=2, colspan=3)
+        ax_dashboard = plt.subplot2grid((11, 4), (0, 3), rowspan=2, colspan=1)
+
+        ax_equity = plt.subplot2grid((11, 4), (2, 0), rowspan=3, colspan=4)
+
+        ax_drawdown = plt.subplot2grid((11, 4), (5, 0), rowspan=2, colspan=4)
+        ax_signals = plt.subplot2grid((11, 4), (7, 0), rowspan=2, colspan=4)
+        ax_alloc = plt.subplot2grid((11, 4), (9, 0), rowspan=2, colspan=4)
+
+        # ----------------------------------------------------------------------
+        # ROW 0-1 LEFT: MONTHLY RETURNS TABLE (Ax_monthly)
+        # ----------------------------------------------------------------------
+
+        monthly_data = monthly_returns_df.values
+        col_labels = monthly_returns_df.columns
+        row_labels = monthly_returns_df.index
+
+        # Color Monthly Returns (Green for positive, Red for negative)
+        color_matrix = np.full(monthly_data.shape, 'white', dtype=object)
+        for i in range(monthly_data.shape[0]):
+            for j in range(monthly_data.shape[1]):
+                value = monthly_data[i, j]
+                val = 0.0
+                if isinstance(value, str):
+                    try:
+                        # Attempt to parse as float (remove %)
+                        if '%' in value:
+                            # We use replace twice for safety just in case of double-spaces
+                            val = float(value.replace('%', '').replace(' ', '').strip()) / 100.0
+                        else:
+                            val = float(value)
+                    except ValueError:
+                        pass
                 else:
-                    continue 
-                ax3.text(date, 1.25, label, fontsize=9, fontweight='bold', color='black', ha='center', va='center') 
+                    val = value
 
-        # Red lines at trades 
-        change_dates = alloc.diff().abs() > 0.01
-        change_dates = change_dates[change_dates].index
-        for date in change_dates:
-            ax1.axvline(date, color='red', alpha=0.6, linestyle='--', linewidth=1.2)
-            ax2.axvline(date, color='red', alpha=0.6, linestyle='--', linewidth=1.2)
-            ax3.axvline(date, color='red', alpha=0.6, linestyle='--', linewidth=1.2)
+                if val > 0.0001:
+                    color_matrix[i, j] = '#e6ffe6'
+                elif val < -0.0001:
+                    color_matrix[i, j] = '#ffe6e6'
+                else:
+                    color_matrix[i, j] = 'white'
 
-        # KPI table
-        metrics = self.analyze(equity)
-        time_in_market = (alloc > 0).mean()
-        kpi = [
-            ["CAGR", f"{metrics['CAGR']:.2%}"],
-            ["Max Drawdown", f"{metrics['MaxDD']:.1%}"],
-            ["Sharpe Ratio", f"{metrics['Sharpe']:.2f}"],
-            ["Time in Market", f"{time_in_market:.1%}"],
-            ["Total Trades", f"{len(change_dates)}"],
-        ]
-        table = ax1.table(cellText=kpi, colWidths=[0.19, 0.14], cellLoc='center',
-                          loc='upper left', bbox=[0.02, 0.62, 0.28, 0.28])
-        table.auto_set_font_size(False)
-        table.set_fontsize(11.5)
-        for (r, c), cell in table.get_celld().items():
-            cell.set_edgecolor('black')
-            if r == 0:
-                cell.set_facecolor('#204680')
-                cell.set_text_props(color='white', weight='bold')
-
-        # Status box
-        status_text = (
-            f"Current Position\n"
-            f"{current_pos}\n\n"
-            f"Logic: {algo_mode}\n"
-            f"Raw TMOM Sig: {'Bullish' if current_tmom else 'Bearish'}\n"
-            f"Raw SMA Sig : {'Above MA' if current_sma else 'Below MA'}\n"
-            f"TMOM Lookback: {tmom_lookback} months\n"
-            f"SMA Period: {sma_period} days\n"
-            f"Last update: {last_date.strftime('%Y-%m-%d')}"
+        # Create the table
+        table_monthly = ax_monthly.table(
+            cellText=monthly_data,
+            colLabels=col_labels,
+            rowLabels=row_labels,
+            cellColours=color_matrix,
+            cellLoc='center',
+            loc='center',
+            bbox=[0, 0, 1, 1]
         )
-        ax1.text(0.98, 0.02, status_text,
-                 transform=ax1.transAxes,
-                 fontsize=12,
-                 verticalalignment='bottom',
-                 horizontalalignment='right',
-                 bbox=dict(boxstyle="round,pad=0.6", facecolor=color_pos, alpha=0.9),
-                 linespacing=1.4)
+        for (i, j), cell in table_monthly.get_celld().items():
+            if j == monthly_data.shape[1] - 1:
+                cell.set_text_props(weight='bold')
 
-        plt.suptitle(f'Downside Protection Model — {algo_mode} Logic (Labeled)',
-                     fontsize=20, fontweight='bold', y=0.95)
-        plt.subplots_adjust(top=0.92, bottom=0.06, left=0.06, right=0.96)
-        plt.savefig(os.path.join(output_path, f'{asset_name}_DPM_{algo_mode}_{tmom_lookback}m_{sma_period}d_labeled.png'),
-                    dpi=300, bbox_inches='tight', facecolor='white') 
-        plt.close()
+        ax_monthly.axis('off')
+        ax_monthly.set_title("Annual & Monthly Returns Matrix", fontsize=12, pad=10)
+
+        # ----------------------------------------------------------------------
+        # ROW 0-1 RIGHT: NEW DASHBOARD / SHRUNK KPIS (Ax_dashboard)
+        # ----------------------------------------------------------------------
+        ax_dashboard.axis('off')
+
+        # Position Status
+        last_alloc = alloc.iloc[-1]
+        if last_alloc == 1.0:
+            pos_status = "Fully Invested"
+            pos_color = 'forestgreen'
+        elif last_alloc > 0.0:
+            pos_status = "Partial Position"
+            pos_color = 'gold'
+        else:
+            pos_status = "Cash / Out"
+            pos_color = 'lightgray'
+
+        # Signal Status
+        tmom_status = 'Positive' if tmom_sig.iloc[-1] > 0 else 'Negative'
+        tmom_color = 'green' if tmom_sig.iloc[-1] > 0 else 'red'
+
+        sma_status = 'Positive' if sma_sig.iloc[-1] > 0 else 'Negative'
+        sma_color = 'green' if sma_sig.iloc[-1] > 0 else 'red'
+
+
+        # Draw Dashboard Text
+        ax_dashboard.text(0.5, 0.92, "Current Position", fontsize=10, weight='bold', ha='center', transform=ax_dashboard.transAxes)
+        ax_dashboard.text(0.5, 0.84, pos_status, fontsize=12, color='black', ha='center', va='center',
+                          bbox=dict(facecolor=pos_color, edgecolor='black', boxstyle='round,pad=0.5'),
+                          transform=ax_dashboard.transAxes)
+
+        ax_dashboard.text(0.05, 0.73, "TMOM Signal:", fontsize=9, ha='left', transform=ax_dashboard.transAxes)
+        ax_dashboard.text(0.95, 0.73, tmom_status, fontsize=9, ha='right', color='white',
+                          bbox=dict(facecolor=tmom_color, edgecolor='none', boxstyle='round,pad=0.2'),
+                          transform=ax_dashboard.transAxes)
+
+        ax_dashboard.text(0.05, 0.65, "SMA Signal:", fontsize=9, ha='left', transform=ax_dashboard.transAxes)
+        ax_dashboard.text(0.95, 0.65, sma_status, fontsize=9, ha='right', color='white',
+                          bbox=dict(facecolor=sma_color, edgecolor='none', boxstyle='round,pad=0.2'),
+                          transform=ax_dashboard.transAxes)
+
+        # --- Section B: Latest Perfs & Core KPIs ---
+
+        # Calculate latest perfs (FIX: use 'ME' for month-end frequency)
+        returns_monthly = equity.resample('ME').last().pct_change().dropna()
+
+        def safe_perf(series, periods):
+            if len(series) < periods:
+                return 0.0
+            return (1 + series.iloc[-periods:].fillna(0)).prod() - 1
+
+        mtd_ret = returns_monthly.iloc[-1] if not returns_monthly.empty else 0.0
+        l3m_ret = safe_perf(returns_monthly, 3)
+        l6m_ret = safe_perf(returns_monthly, 6)
+        l12m_ret = safe_perf(returns_monthly, 12)
+
+        perf_data = [
+            ("Current Month (MTD)", f"{mtd_ret * 100:.2f}%"),
+            ("Last 3 Months (L3M)", f"{l3m_ret * 100:.2f}%"),
+            ("Last 6 Months (L6M)", f"{l6m_ret * 100:.2f}%"),
+            ("Last 12 Months (L12M)", f"{l12m_ret * 100:.2f}%")
+        ]
+
+        # Core KPIs (Request 2 implemented: removed Vol and Longest DD)
+        kpi_data = [
+            ("CAGR (%)", f"{metrics.get('CAGR', 0) * 100:.2f}%"),
+            ("Sharpe Ratio", f"{metrics.get('Sharpe', 0):.2f}"),
+            ("Max Drawdown (%)", f"{metrics.get('MaxDD', 0) * 100:.2f}%"),
+            # Re-adding these trade metrics, assuming they were fixed in the other function
+            ("Num Trades", int(metrics.get('Num Trades', 0))),
+            ("Win Trades (%)", f"{metrics.get('Win Trades', 0):.1f}%"),
+            ("Profit Factor", f"{metrics.get('Profit Factor', 0):.2f}"),
+            ("Avg Trade Return", f"{metrics.get('Avg Trade Return', 0) * 100:.2f}%"),
+        ]
+
+        # Combine KPIs and latest perfs
+        table_rows = [row[0] for row in kpi_data] + ["---"] + [row[0] for row in perf_data]
+        cell_values = [[str(row[1])] for row in kpi_data] + [["---"]] + [[row[1]] for row in perf_data]
+
+        ax_dashboard.table(
+            cellText=cell_values,
+            rowLabels=table_rows,
+            colLabels=["Core Metrics / Performance"],
+            cellLoc='right',
+            rowLoc='left',
+            loc='bottom',
+            bbox=[0.05, 0.0, 0.9, 0.55]
+        )
+        ax_dashboard.set_title("Strategy Status & Latest Performance", fontsize=12, pad=10)
+
+
+        # ----------------------------------------------------------------------
+        # ROW 2: EQUITY CURVE
+        # ----------------------------------------------------------------------
+
+        ax_equity.plot(equity, label=f'{asset_name} DPM Strategy', color='dodgerblue', linewidth=2)
+        ax_equity.plot(benchmark.reindex(equity.index), label=f'{asset_name} Benchmark', color='gray', linestyle='--', linewidth=1)
+        ax_equity.set_title(f"Cumulative Returns - {asset_name} ({algo_mode}: TMOM {tmom_lookback}m, SMA {sma_period}d)", fontsize=14)
+        ax_equity.set_ylabel("Equity Curve (Base 1.0)", fontsize=10)
+        ax_equity.legend(loc='upper left')
+        ax_equity.grid(True, linestyle=':', alpha=0.6)
+        ax_equity.tick_params(axis='x', rotation=45)
+
+        # ----------------------------------------------------------------------
+        # ROW 3: DRAWDOWN (With UserWarning fix)
+        # ----------------------------------------------------------------------
+
+        ax_drawdown.fill_between(drawdown.index, drawdown, 0, color='indianred', alpha=0.7)
+        ax_drawdown.set_title("Max Drawdown Over Time", fontsize=12)
+        ax_drawdown.set_ylabel("Drawdown (%)", fontsize=10)
+        ax_drawdown.tick_params(axis='x', rotation=45)
+        ax_drawdown.grid(True, linestyle=':', alpha=0.6)
+
+        y_ticks = ax_drawdown.get_yticks()
+        ax_drawdown.set_yticks(y_ticks)
+        ax_drawdown.set_yticklabels([f'{int(x*100)}%' for x in y_ticks])
+
+        # ----------------------------------------------------------------------
+        # ROW 4, 5: SIGNALS & ALLOCATION
+        # ----------------------------------------------------------------------
+
+        ax_signals.plot(signal_prices, label=f'{asset_name} Signal Price', color='darkorange', alpha=0.8, linewidth=1)
+        tmom_on_days = tmom_sig[tmom_sig > 0].index
+        ax_signals.plot(signal_prices.loc[tmom_on_days], 'o', markersize=2, color='green', alpha=0.5, label='TMOM Signal ON')
+        sma_on_days = sma_sig[sma_sig > 0].index
+        ax_signals.plot(signal_prices.loc[sma_on_days], 'x', markersize=2, color='purple', alpha=0.5, label='SMA Signal ON')
+        ax_signals.set_title(f"Signal Price and Component Signals", fontsize=12)
+        ax_signals.set_ylabel("Price ($)", fontsize=10)
+        ax_signals.legend(loc='upper left', fontsize=8)
+        ax_signals.grid(True, linestyle=':', alpha=0.6)
+        ax_signals.tick_params(axis='x', rotation=45)
+
+        ax_alloc.fill_between(alloc.index, alloc, 0, color='forestgreen', alpha=0.6, step='post')
+        ax_alloc.set_title("Strategy Allocation (0.0 to 1.0)", fontsize=12)
+        ax_alloc.set_ylabel("Allocation", fontsize=10)
+        ax_alloc.set_ylim(-0.05, 1.05)
+        ax_alloc.grid(True, linestyle=':', alpha=0.6)
+        ax_alloc.tick_params(axis='x', rotation=45)
+
+
+        # Final adjustments
+        fig.suptitle(f'Dynamic Portfolio Manager (DPM) Strategy Report\nAsset: {asset_name} | Mode: {algo_mode}', fontsize=16, fontweight='bold', y=0.98)
+        fig.tight_layout(rect=[0, 0.03, 1, 0.96])
+
+        # Save as a professional PDF
+        file_name = f'{asset_name}_{algo_mode}_{tmom_lookback}m_{sma_period}d_professional_report.pdf'
+        plt.savefig(os.path.join(output_path, file_name), format='pdf')
+        plt.close(fig)
+        logging.info(f"Generated professional report: {file_name}")
 
     def calculate_trade_metrics(self, trade_log_df: pd.DataFrame) -> Dict[str, float]:
         """
@@ -439,10 +534,10 @@ class PerformanceAnalyzer:
         """
         if trade_log_df.empty:
             return {
-                'Num Trades': 0,
-                'Win Trades': 0,
+                'Num Trades': 0.0,
+                'Win Trades': 0.0, # Now stores Win Rate as float
                 'Profit Factor': 0.0,
-                'Avg P/L (%)': 0.0
+                'Avg Trade Return': 0.0
             }
 
         pl_data = trade_log_df['P/L (float)']
@@ -450,25 +545,24 @@ class PerformanceAnalyzer:
         # 1. Total Trades
         num_trades = len(trade_log_df)
 
-        # 2. Win Trades
-        win_trades = len(pl_data[pl_data > 0])
+        # 2. Win Rate (as float percentage)
+        win_trades_count = len(pl_data[pl_data > 0])
+        win_rate = (win_trades_count / num_trades) * 100.0 if num_trades > 0 else 0.0
 
         # 3. Profit Factor: Gross Profit / Gross Loss (absolute value)
         gross_profit = pl_data[pl_data > 0].sum()
         gross_loss = pl_data[pl_data < 0].sum()
 
-        # Avoid division by zero
         profit_factor = gross_profit / abs(gross_loss) if gross_loss != 0 else np.nan
 
-        # 4. Average P/L (%)
-        avg_pl = pl_data.mean() * 100 # Convert mean to percentage
+        # 4. Average Trade Return (raw float)
+        avg_trade_return = pl_data.mean()
 
         return {
-            'Num Trades': num_trades,
-            # We store win trades as an integer count, but the dictionary must conform to float type hint
-            'Win Trades': float(win_trades),
+            'Num Trades': float(num_trades),
+            'Win Trades': win_rate, # Stores Win Rate (%)
             'Profit Factor': profit_factor,
-            'Avg P/L (%)': avg_pl
+            'Avg Trade Return': avg_trade_return # Stores raw float
         }
 
     def calculate_monthly_returns(self, equity_curve: pd.Series) -> pd.DataFrame:
@@ -707,6 +801,10 @@ def main(config_path: str = 'config.yaml'):
             analyzer.plot_professional_report(
                 equity=equity,
                 benchmark=benchmark,
+                # --- NEW ARGUMENTS ---
+                metrics=metrics,                      # Pass the full metrics dictionary
+                monthly_returns_df=monthly_returns_df,  # Pass the monthly returns table
+                # --- EXISTING ARGUMENTS ---
                 pos_numeric=results['position_numeric'],
                 alloc=results['allocations'],
                 signal_prices=signal_prices,
@@ -720,7 +818,7 @@ def main(config_path: str = 'config.yaml'):
                 sma_period=sma_p,
                 algo_mode=algo_mode # Pass algo_mode for title
             )
-            
+
             results[['equity_curve', 'position_numeric', 'allocations']].to_csv(
                 os.path.join(out_dir, f'{name}_{algo_mode}_full_data.csv')
             )
