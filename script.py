@@ -174,6 +174,98 @@ class PortfolioSimulator:
             'allocations': alloc
         }, index=idx)
 
+class TradeTracker:
+    """
+    Processes the daily simulation results (allocations, prices, equity) to generate
+    a trade-by-trade log for closed trades.
+
+    A trade is considered 'closed' when the allocation moves from > 0 to 0.
+    """
+    def __init__(self, asset_name: str):
+        self.asset_name = asset_name
+
+    def get_trade_log(self, allocations: pd.Series, asset_prices: pd.Series, equity_curve: pd.Series) -> pd.DataFrame:
+
+        # Align all series by date index
+        # Note: We rely on `asset_prices` being the closing price of the traded asset.
+        data = pd.DataFrame({
+            'allocation': allocations.fillna(0),
+            'price': asset_prices,
+            'equity': equity_curve
+        }).dropna()
+
+        # Identify when a position is open
+        data['is_in_position'] = data['allocation'] > 0
+
+        trade_log = []
+        current_trade = None
+
+        for date, row in data.iterrows():
+
+            # --- 1. OPEN TRADE DETECTION ---
+            # Position moves from 0 to > 0
+            if row['is_in_position'] and current_trade is None:
+                current_trade = {
+                    'Open Date': date,
+                    'Entry Price': row['price'],
+                    'Entry Equity': row['equity'],
+                    'Max Equity In Trade': row['equity'],
+                    'Min Equity In Trade': row['equity'],
+                    'Allocation Level': row['allocation']
+                }
+
+            # --- 2. TRACKING DURING TRADE ---
+            elif row['is_in_position'] and current_trade is not None:
+                # Track max/min equity during the holding period
+                current_trade['Max Equity In Trade'] = max(current_trade['Max Equity In Trade'], row['equity'])
+                current_trade['Min Equity In Trade'] = min(current_trade['Min Equity In Trade'], row['equity'])
+
+            # --- 3. CLOSE TRADE DETECTION ---
+            # Position moves from > 0 to 0
+            if not row['is_in_position'] and current_trade is not None:
+
+                # Calculate metrics for the closed trade
+                close_date = date
+                exit_price = row['price']
+                exit_equity = row['equity']
+
+                # Calculate metrics
+                # P/L based on asset price movement (more standard for trade log)
+                pl_percent = (exit_price / current_trade['Entry Price']) - 1.0
+
+                # Max Drawdown IN the trade (relative to entry equity)
+                # MaxDD is the maximum drop from the entry point during the trade
+                max_dd_in_trade = (current_trade['Min Equity In Trade'] / current_trade['Entry Equity']) - 1.0
+
+                trade_record = {
+                    'Asset': self.asset_name,
+                    'Open Date': current_trade['Open Date'],
+                    'Close Date': close_date,
+                    'Direction': 'Long', # DPM only takes long positions
+                    'Allocation Level': current_trade['Allocation Level'],
+                    'P/L (%)': pl_percent,
+                    'MaxDD In Trade (%)': max_dd_in_trade,
+                    'Days Held': (close_date - current_trade['Open Date']).days
+                }
+                trade_log.append(trade_record)
+
+                # Reset state
+                current_trade = None
+
+        trade_df = pd.DataFrame(trade_log)
+
+        # --- REVISED FORMATTING FOR ANALYSIS ---
+        if not trade_df.empty:
+            # RETAIN RAW FLOAT FOR CALCULATIONS (New column)
+            trade_df['P/L (float)'] = trade_df['P/L (%)']
+            trade_df['MaxDD In Trade (float)'] = trade_df['MaxDD In Trade (%)']
+
+            # FORMAT THE OLD COLUMNS TO STRINGS FOR PRINTING/DISPLAY (Existing code, kept for compatibility)
+            trade_df['P/L (%)'] = trade_df['P/L (%)'].apply(lambda x: f"{x:.2%}")
+            trade_df['MaxDD In Trade (%)'] = trade_df['MaxDD In Trade (%)'].apply(lambda x: f"{x:.2%}")
+
+        return trade_df.set_index('Open Date')
+
 class PerformanceAnalyzer:
     def analyze(self, equity: pd.Series) -> Dict:
         if len(equity) < 2:
@@ -340,6 +432,74 @@ class PerformanceAnalyzer:
                     dpi=300, bbox_inches='tight', facecolor='white') 
         plt.close()
 
+    def calculate_trade_metrics(self, trade_log_df: pd.DataFrame) -> Dict[str, float]:
+        """
+        Calculates key trading statistics from the closed trade log.
+        Requires 'P/L (float)' column containing unformatted P/L values.
+        """
+        if trade_log_df.empty:
+            return {
+                'Num Trades': 0,
+                'Win Trades': 0,
+                'Profit Factor': 0.0,
+                'Avg P/L (%)': 0.0
+            }
+
+        pl_data = trade_log_df['P/L (float)']
+
+        # 1. Total Trades
+        num_trades = len(trade_log_df)
+
+        # 2. Win Trades
+        win_trades = len(pl_data[pl_data > 0])
+
+        # 3. Profit Factor: Gross Profit / Gross Loss (absolute value)
+        gross_profit = pl_data[pl_data > 0].sum()
+        gross_loss = pl_data[pl_data < 0].sum()
+
+        # Avoid division by zero
+        profit_factor = gross_profit / abs(gross_loss) if gross_loss != 0 else np.nan
+
+        # 4. Average P/L (%)
+        avg_pl = pl_data.mean() * 100 # Convert mean to percentage
+
+        return {
+            'Num Trades': num_trades,
+            # We store win trades as an integer count, but the dictionary must conform to float type hint
+            'Win Trades': float(win_trades),
+            'Profit Factor': profit_factor,
+            'Avg P/L (%)': avg_pl
+        }
+
+    def calculate_monthly_returns(self, equity_curve: pd.Series) -> pd.DataFrame:
+        """Calculates monthly returns pivot table, including YTD."""
+
+        # 1. Calculate Daily Returns and Resample to Monthly
+        daily_returns = equity_curve.pct_change().fillna(0)
+        monthly_returns = daily_returns.resample('ME').apply(lambda x: (1 + x).prod() - 1)
+
+        # 2. Create Pivot Table (Year x Month)
+        monthly_returns_df = monthly_returns.to_frame(name='Monthly Return')
+        monthly_returns_df['Year'] = monthly_returns_df.index.year
+        monthly_returns_df['Month'] = monthly_returns_df.index.strftime('%b') # Abbreviated month name
+
+        month_order = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        monthly_returns_pivot = monthly_returns_df.pivot(index='Year', columns='Month', values='Monthly Return').reindex(columns=month_order)
+
+        # 3. Calculate Year-To-Date (YTD) Return
+        ytd_returns = monthly_returns.groupby(monthly_returns.index.year).apply(lambda x: (1 + x).prod() - 1)
+        monthly_returns_pivot['YTD'] = ytd_returns
+
+        # 4. Formatting (Percentage strings)
+        def format_return(ret):
+            if pd.isna(ret):
+                return ''
+            return f"{ret:.2%}"
+
+        # Apply formatting map (converts float values to strings)
+        monthly_returns_pivot_formatted = monthly_returns_pivot.map(format_return)
+
+        return monthly_returns_pivot_formatted
 
 def main(config_path: str = 'config.yaml'):
     global rf 
@@ -492,9 +652,57 @@ def main(config_path: str = 'config.yaml'):
             results = simulator.simulate(allocations, asset_ret, rf)
             equity = results['equity_curve']
             drawdown = equity / equity.cummax() - 1 
-            
+
             metrics = analyzer.analyze(equity)
             logging.info(f"{name} → CAGR {metrics['CAGR']:.2%} | MaxDD {metrics['MaxDD']:.1%} | Sharpe {metrics['Sharpe']:.2f}")
+
+            # --- NEW TIER 1 -> TIER 2 INTEGRATION: Trade Tracking ---
+
+            # 1. Get the price data for the traded asset
+            # NOTE: Using 'Close' column, adjust if necessary based on your fetched data structure
+            trade_data = fetcher.fetch_data(trade_ticker, start, end)
+            trade_prices = trade_data['Close']
+
+            # 2. Instantiate and run the TradeTracker
+            tracker = TradeTracker(asset_name=name)
+            trade_log_df = tracker.get_trade_log(
+                allocations=results['allocations'],
+                asset_prices=trade_prices,
+                equity_curve=equity
+            )
+
+            # --- START TIER 3 INTEGRATION: Data Reporting & Analysis (Phase 2, Step 2) ---
+
+            # The base metrics (Sharpe, CAGR, MaxDD) must be calculated first
+            # We assume metrics = analyzer.analyze(equity) was called earlier.
+
+            # 1. Calculate the New Trade Metrics (Section 1 KPIs)
+            trade_metrics = analyzer.calculate_trade_metrics(trade_log_df)
+            metrics.update(trade_metrics) # Merge new trade metrics into the existing 'metrics' dict
+
+            # 2. Calculate the Monthly Returns Matrix (Section 2 Data)
+            # This is stored in a separate DataFrame
+            monthly_returns_df = analyzer.calculate_monthly_returns(equity)
+
+            # 3. Log the new core metrics (for quick inspection)
+            logging.info(f"Generated Trade Metrics: Num Trades={metrics['Num Trades']}, Win Trades={metrics['Win Trades']}, Profit Factor={metrics['Profit Factor']:.2f}")
+            logging.info(f"Generated Monthly Returns: {monthly_returns_df.index[0]}-{monthly_returns_df.index[-1]}")
+
+            # --- END TIER 3 INTEGRATION ---
+
+            # --- START TIER 4 INTEGRATION: Data Export (Phase 2, Step 3) ---
+
+            # 1. Export the Trade Log
+            trade_log_file_name = f'{name}_{algo_mode}_{tmom_lb}m_{sma_p}d_trade_log.csv'
+            trade_log_df.to_csv(os.path.join(out_dir, trade_log_file_name))
+            logging.info(f"Saved Trade Log to: {trade_log_file_name}")
+
+            # 2. Export the Monthly Returns Matrix
+            monthly_returns_file_name = f'{name}_{algo_mode}_{tmom_lb}m_{sma_p}d_monthly_returns.csv'
+            monthly_returns_df.to_csv(os.path.join(out_dir, monthly_returns_file_name))
+            logging.info(f"Saved Monthly Returns Matrix to: {monthly_returns_file_name}")
+
+            # --- END TIER 4 INTEGRATION ---
 
             analyzer.plot_professional_report(
                 equity=equity,
@@ -502,10 +710,10 @@ def main(config_path: str = 'config.yaml'):
                 pos_numeric=results['position_numeric'],
                 alloc=results['allocations'],
                 signal_prices=signal_prices,
-                drawdown=drawdown, 
+                drawdown=drawdown,
                 rf=rf,
-                tmom_sig=tmom_sig, 
-                sma_sig=sma_sig,  
+                tmom_sig=tmom_sig,
+                sma_sig=sma_sig,
                 asset_name=name,
                 output_path=out_dir,
                 tmom_lookback=tmom_lb,
