@@ -1,0 +1,23 @@
+DPMStrategy/
+├── dpm_core/
+│   ├── __init__.py                # To make 'dpm_core' a Python package
+│   ├── strategy_core.py           # Renamed: Contains all existing class definitions:
+│   │                                  - DataFetcher, SignalGenerator (ABC)
+│   │                                  - TMOMSignal, SMASignal
+│   │                                  - DPMAllocator, PortfolioSimulator, TradeTracker
+│   │                                  - PerformanceAnalyzer (with plotting methods)
+│   └── dpm_manager.py             # NEW: Contains the DBManager class (SQLite integration)
+│
+├── config.yaml                    # Existing: Configuration for parameters (TMOM, SMA, Assets)
+├── backtest_runner.py             # NEW: Entry point for OFF-LINE SIMULATION (your original 'main()' logic)
+├── live_engine.py                 # NEW: Entry point for ON-LINE EXECUTION (daily scheduler script)
+├── web_dashboard.py               # NEW: Entry point for WEB INTERFACE (Streamlit/Dash app)
+├── dpm_live.db                    # NEW: SQLite Database file (stores live equity curve, state)
+│
+├── data_cache/                    # Existing: Cached historical data from yfinance
+│   └── QQQ_2010-07-01_2025-12-31.csv
+│
+└── results/                       # Existing: Backtesting reports and data
+    ├── *_professional_report.pdf
+    ├── *_full_data.csv            # (Equity Curve, Allocation)
+    └── ...
