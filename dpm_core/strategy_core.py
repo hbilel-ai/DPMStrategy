@@ -13,7 +13,7 @@ from typing import Dict, Any
 import os
 import logging
 import shutil
-import itertools 
+import itertools
 
 # Set logging to INFO
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -132,7 +132,7 @@ class DataFetcher:
         if os.path.exists(cache_path):
             logging.info(f"Loading cached data for {asset}")
             return pd.read_csv(cache_path, index_col='Date', parse_dates=True)
-        
+
         logging.info(f"Fetching data for {asset} from yfinance")
         data = yf.download(asset, start=start_date, end=end_date, auto_adjust=True, ignore_tz=True, progress=False)
         if isinstance(data.columns, pd.MultiIndex):
@@ -193,15 +193,15 @@ class DPMAllocator:
         
         # Mapping from allocation float to state key
         alloc_to_state = {1.0: 'Invested', 0.5: 'Partial', 0.0: 'Cash'}
-        
+
         if method == 'Linear':
             # Simple linear allocation: (M + S) / 2
             allocations = (daily_tmom_sig + daily_sma_sig) / 2.0
-            
+
         elif method == 'Conditional':
             # --- CONDITIONAL STATE MACHINE IMPLEMENTATION ---
             state_machine = {
-                ('Cash', 0, 0): 0.0, ('Cash', 0, 1): 0.0, 
+                ('Cash', 0, 0): 0.0, ('Cash', 0, 1): 0.0,
                 ('Cash', 1, 1): 1.0, ('Cash', 1, 0): 0.5,
                 ('Partial', 0, 0): 0.0, ('Partial', 0, 1): 0.0,
                 ('Partial', 1, 1): 1.0, ('Partial', 1, 0): 0.5,
@@ -210,7 +210,7 @@ class DPMAllocator:
             }
 
             for i in range(1, len(allocations)):
-                p_prev = allocations.iloc[i-1] 
+                p_prev = allocations.iloc[i-1]
                 p_prev_state = alloc_to_state.get(round(p_prev, 1))
                 s_sig = daily_sma_sig.iloc[i]
                 m_sig = daily_tmom_sig.iloc[i]
@@ -292,7 +292,7 @@ class TradeTracker:
                 }
                 trade_log.append(trade_record)
                 current_trade = None
-        
+
         trade_df = pd.DataFrame(trade_log)
         if not trade_df.empty:
             trade_df['P/L (float)'] = trade_df['P/L (%)']
@@ -360,17 +360,21 @@ class PerformanceAnalyzer:
         sma_color = '#4CAF50' if sma_sig.iloc[-1] > 0 else '#F44336'
 
         # Dashboard Text
-        ax_dashboard.set_title("Strategy Status & Core Metrics", fontsize=14, pad=10, weight='bold')
-        ax_dashboard.text(0.2, 0.8, "Current Position", fontsize=11, weight='bold', ha='center', transform=ax_dashboard.transAxes)
-        ax_dashboard.text(0.2, 0.65, pos_status, fontsize=16, color=pos_text_color, ha='center', va='center',
-                          bbox=dict(facecolor=pos_color, edgecolor='none', boxstyle='round,pad=0.6'), transform=ax_dashboard.transAxes)
-        ax_dashboard.text(0.05, 0.45, "TMOM Signal:", fontsize=10, ha='left', transform=ax_dashboard.transAxes)
-        ax_dashboard.text(0.35, 0.45, tmom_status, fontsize=10, ha='right', color='white', weight='bold',
+        ax_dashboard.text(0.5, 0.95, "Strategy Status & Core Metrics", fontsize=12, weight='bold', ha='center', va='top', transform=ax_dashboard.transAxes)
+
+        ax_dashboard.text(0.25, 0.75, "Current Position", fontsize=10, weight='bold', ha='center', transform=ax_dashboard.transAxes)
+        ax_dashboard.text(0.25, 0.55, pos_status, fontsize=14, color=pos_text_color, ha='center', va='center',
+                          bbox=dict(facecolor=pos_color, edgecolor='none', boxstyle='round,pad=0.5'), transform=ax_dashboard.transAxes)
+
+        ax_dashboard.text(0.05, 0.35, "TMOM Signal:", fontsize=9, ha='left', transform=ax_dashboard.transAxes)
+        ax_dashboard.text(0.45, 0.35, tmom_status, fontsize=9, ha='right', color='white', weight='bold',
                           bbox=dict(facecolor=tmom_color, edgecolor='none', boxstyle='round,pad=0.3'), transform=ax_dashboard.transAxes)
-        ax_dashboard.text(0.05, 0.3, "SMA Signal:", fontsize=10, ha='left', transform=ax_dashboard.transAxes)
-        ax_dashboard.text(0.35, 0.3, sma_status, fontsize=10, ha='right', color='white', weight='bold',
+
+        ax_dashboard.text(0.05, 0.20, "SMA Signal:", fontsize=9, ha='left', transform=ax_dashboard.transAxes)
+        ax_dashboard.text(0.45, 0.20, sma_status, fontsize=9, ha='right', color='white', weight='bold',
                           bbox=dict(facecolor=sma_color, edgecolor='none', boxstyle='round,pad=0.3'), transform=ax_dashboard.transAxes)
-        ax_dashboard.axvline(x=0.45, color='lightgray', linestyle='--', linewidth=1.5)
+
+        ax_dashboard.axvline(x=0.48, ymin=0.1, ymax=0.9, color='lightgray', linestyle='--', linewidth=1.5)
 
         # Performance Data
         returns_monthly = equity.resample('ME').last().pct_change().dropna()
@@ -405,18 +409,20 @@ class PerformanceAnalyzer:
             perf_colors.append(color)
 
         perf_table = ax_dashboard.table(cellText=[row[1:] for row in perf_rows], rowLabels=[row[0] for row in perf_rows],
-            colLabels=["Latest Performance"], cellLoc='right', rowLoc='left', loc='center', bbox=[0.5, 0.5, 0.45, 0.45])
+            colLabels=["Latest Performance"], cellLoc='right', rowLoc='left', loc='center',
+            bbox=[0.52, 0.55, 0.45, 0.35])
 
         # FIX: Index is (i + 1, 0) -> Row i+1 (skip header), Col 0 (data column)
         for i, color in enumerate(perf_colors):
             perf_table.get_celld()[(i + 1, 0)].set_text_props(color=color, weight='bold')
-            perf_table.get_celld()[(i + 1, 0)].set_fontsize(10)
+            perf_table.get_celld()[(i + 1, 0)].set_fontsize(9)
 
         # --- KPI TABLE ---
         kpi_table_rows = [[row[0], row[1]] for row in kpi_data]
         # FIX: Ensure cellText is a list of lists [[val], [val]] so it creates a proper column
         kpi_table = ax_dashboard.table(cellText=[[row[1]] for row in kpi_table_rows], rowLabels=[row[0] for row in kpi_table_rows],
-            colLabels=["Core Metrics"], cellLoc='right', rowLoc='left', loc='center', bbox=[0.5, 0.05, 0.45, 0.4])
+            colLabels=["Core Metrics"], cellLoc='right', rowLoc='left', loc='center',
+            bbox=[0.52, 0.05, 0.45, 0.40])
 
         # FIX: MaxDD is index 2 in data -> Row 3 (2+1) in table, Col 0
         kpi_table.get_celld()[(3, 0)].set_text_props(color='#F44336', weight='bold')
@@ -468,12 +474,11 @@ class PerformanceAnalyzer:
         ax_alloc.set_ylim(-0.05, 1.05)
         ax_alloc.grid(True, linestyle=':', alpha=0.6)
 
-        fig.suptitle(f'Dynamic Portfolio Manager (DPM) Strategy Report\nAsset: {asset_name} | Mode: {algo_mode}', fontsize=16, fontweight='bold', y=0.99)
+        fig.suptitle(f'Dynamic Portfolio Manager (DPM) Strategy Report\nAsset: {asset_name} | Mode: {algo_mode}', fontsize=16, fontweight='bold', y=0.98)
         fig.tight_layout(rect=[0, 0.01, 1, 0.97])
-        file_name = f'{asset_name}_{algo_mode}_{tmom_lookback}m_{sma_period}d_professional_report.pdf'
-        plt.savefig(os.path.join(output_path, file_name), format='pdf')
         plt.close(fig)
-        logging.info(f"Generated professional report: {file_name}")
+        logging.info(f"Generated professional report (File output suppressed in this environment).")
+
 
     def calculate_trade_metrics(self, trade_log_df: pd.DataFrame) -> Dict[str, float]:
         if trade_log_df.empty:
