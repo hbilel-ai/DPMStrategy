@@ -81,7 +81,14 @@ def main(config_path: str = 'config.yaml'):
             
             for tmom_lb, sma_p in itertools.product(tmom_lookbacks, sma_periods):
                 # Pass algo_mode here
-                allocations = allocator.allocate(signal_prices, rf, tmom_lb, sma_p, method=algo_mode)
+                #allocations = allocator.allocate(signal_prices, rf, tmom_lb, sma_p, method=algo_mode)
+                allocations, daily_tmom_sig, daily_sma_sig = allocator.allocate(
+                    signal_prices=signal_prices,
+                    rf_rates=rf,
+                    tmom_lb=tmom_lb,
+                    sma_p=sma_p,
+                    method=algo_mode
+                )
 
                 results = simulator.simulate(allocations, asset_ret, rf)
                 metrics = analyzer.analyze(results['equity_curve'])
