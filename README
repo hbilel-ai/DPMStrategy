@@ -6,13 +6,13 @@ DPMStrategy/
 │   │                                  - TMOMSignal, SMASignal
 │   │                                  - DPMAllocator, PortfolioSimulator, TradeTracker
 │   │                                  - PerformanceAnalyzer (with plotting methods)
-│   └── dpm_manager.py             # NEW: Contains the DBManager class (SQLite integration)
+│   └── clients_ibkr.py             # Client for live trading
 │
 ├── config.yaml                    # Existing: Configuration for parameters (TMOM, SMA, Assets)
-├── backtest_runner.py             # NEW: Entry point for OFF-LINE SIMULATION (your original 'main()' logic)
-├── live_engine.py                 # NEW: Entry point for ON-LINE EXECUTION (daily scheduler script)
-├── web_dashboard.py               # NEW: Entry point for WEB INTERFACE (Streamlit/Dash app)
-├── dpm_live.db                    # NEW: SQLite Database file (stores live equity curve, state)
+├── backtest_runner.py             # OFF-LINE SIMULATION (your original 'main()' logic)
+├── live_engine.py                 # ON-LINE EXECUTION (daily scheduler script)
+├── web_dashboard.py               # Not yet implemented: Entry point for WEB INTERFACE (Streamlit/Dash app)
+├── dpm_live.db                    # Not yet implemented: SQLite Database file (stores live equity curve, state)
 │
 ├── data_cache/                    # Existing: Cached historical data from yfinance
 │   └── QQQ_2010-07-01_2025-12-31.csv

@@ -6,9 +6,17 @@ import logging
 from datetime import datetime, timedelta
 from dpm_core.strategy_core import (
     DataFetcher, TMOMSignal, SMASignal, DPMAllocator,
-    MockBrokerClient
+    MockBrokerClient, BrokerClient, BoursoramaBrokerClient
 )
+from dpm_core.clients_notify import NotificationManager
 import pandas as pd
+
+# Dynamic imports for IBKRClient
+try:
+    from dpm_core.clients_ibkr import IBKRClient # <-- CORRECT IMPORT LOCATION
+except ImportError:
+    logging.warning("IBKRClient is not available (ibapi not installed or clients_ibkr.py missing).")
+    IBKRClient = None
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 out_dir = './results'
@@ -17,11 +25,12 @@ os.makedirs(out_dir, exist_ok=True)
 # ==============================================================================
 # --- LIVE TRADING EXECUTION FUNCTION ---\
 # ==============================================================================
-
-def run_live_execution(config):
+def run_live_execution(config, notify_manager: NotificationManager, broker: BrokerClient):
     """
     The main execution function run by a scheduler (e.g., daily cron job).
     It fetches data, calculates signals, determines target allocation, and executes a trade via the broker.
+
+    The broker argument is the dynamically loaded client (Mock, Boursorama, or IBKR).
     """
 
     # 1. Load Parameters and Setup
@@ -41,18 +50,21 @@ def run_live_execution(config):
     trade_ticker = asset_config['trade_ticker']
     asset_name = asset_config['name']
 
-    initial_cash = config.get('initial_cash', 100000.0)
+    # REMOVED: initial_cash = config.get('initial_cash', 100000.0)
+    # REMOVED: broker is now passed in, so we don't need to initialize it here.
 
+    # ---------------------------------------------------------------------------------
+    # CHANGE 1: Update logging to reflect dynamic broker type
     logging.info(
         f"================================================================================"
-        f"\nRUNNING ON-LINE MOCK EXECUTION (LIVE_ENGINE)"
-        f"\nASSET: {asset_name} | ALGO MODE: {algo_mode} | TMOM: {tmom_lb}m, SMA: {sma_p}d"
+        f"\nRUNNING ON-LINE EXECUTION"
+        f"\nCLIENT: {broker.__class__.__name__} | ASSET: {asset_name} | ALGO MODE: {algo_mode}"
         f"\n================================================================================"
     )
+    # ---------------------------------------------------------------------------------
 
     fetcher = DataFetcher(clear_cache=False)
-    # NOTE: In a real system, the broker state would be initialized/loaded here.
-    broker = MockBrokerClient(initial_cash=initial_cash)
+    # REMOVED: broker = MockBrokerClient(initial_cash=initial_cash)
     allocator = DPMAllocator(signals={'TMOM': TMOMSignal(), 'SMA': SMASignal()})
 
     # 3. Data Fetching Range
@@ -135,7 +147,7 @@ def run_live_execution(config):
         f"\n"
         f"\n  -- Required Action --"
         f"\n  Goal: Adjust position from {previous_allocation:.1%} to {target_allocation:.1%}"
-        f"\n  Result: See Mock Order Log Below"
+        f"\n  Result: See Broker Execution Log Below"
         f"\n----------------------------------------"
     )
 
@@ -146,30 +158,47 @@ def run_live_execution(config):
         current_price=current_price
     )
 
-    if order_result and order_result.get('status') == 'MOCKED':
+    # ---------------------------------------------------------------------------------
+    # CHANGE 2: Simplified POST-EXECUTION LOGGING
+    # The clients now handle their own specific post-trade actions (like sending notifications).
+    # We only check if *any* action was taken (status is NOT 'NO_TRADE') and log the new state.
+    # ---------------------------------------------------------------------------------
 
-        # --- NEW: POST-EXECUTION LOGGING ---
+    status = order_result.get('status', 'NO_RESULT') if order_result else 'NO_RESULT'
+
+    if status != 'NO_TRADE':
+
+        # --- POST-EXECUTION LOGGING ---
+        # Query the broker for the new state, which is updated regardless of
+        # whether the execution was mock, notification, or live trade.
         new_qty = broker.get_current_position(trade_ticker)
         new_cash = broker.get_current_cash()
         new_value = new_qty * current_price
         new_total_equity = new_cash + new_value
 
-        # New allocation should be the target allocation (100.0% in this case)
+        # New allocation calculation
         new_allocation = new_value / new_total_equity if new_total_equity > 0 else 0.0
 
         logging.info(
-            f"\n--- POST-TRADE STATE ---"
+            f"\n--- POST-TRADE STATE ({status}) ---"
             f"\n  -- New Portfolio State --"
             f"\n  Cash: ${new_cash:,.2f}"
             f"\n  Position ({new_qty:.2f} Qty): ${new_value:,.2f}"
             f"\n  New Allocation: {new_allocation:.1%}"
             f"\n  Total Equity: ${new_total_equity:,.2f}"
-            f"\n------------------------"
+            f"\n----------------------------------"
         )
-        logging.info("Trade execution simulation complete.")
-    else:
-        logging.info("No order executed (no material change or cash/out decision).")
 
+        # REMOVED: Explicit SEND NOTIFICATION block. This logic is now inside
+        # BoursoramaBrokerClient.execute_order().
+
+        logging.info(f"Trade execution complete via {broker.__class__.__name__}.")
+    else:
+        logging.info(f"Execution Status: {status}. No order executed (no material change or cash/out decision).")
+
+# ==============================================================================
+# --- MAIN EXECUTION ENTRY POINT ---
+# ==============================================================================
 
 def main(config_path: str = 'config.yaml'):
     try:
@@ -179,11 +208,52 @@ def main(config_path: str = 'config.yaml'):
         logging.error(f"Config file not found at {config_path}. Cannot run live engine.")
         return
 
-    try:
-        run_live_execution(config)
-    except Exception as e:
-        logging.error(f"An unexpected error occurred during live execution: {e}", exc_info=True)
+    # 1. Initialize Notification Manager
+    notify_manager = NotificationManager(config.get('notification', {}))
 
+    # 2. Broker Initialization is driven ENTIRELY by config.yaml
+    broker = None
+    # Assuming config.yaml has a section like: live_broker: {type: 'ibkr', ...}
+    broker_config = config.get('live_broker', {})
+    broker_type = broker_config.get('type', 'mock').lower()
+    initial_cash = broker_config.get('initial_cash', 100000.0)
+
+    # Instantiate the correct client based on config.yaml
+    if broker_type == 'ibkr' and IBKRClient is not None:
+        try:
+            # IBKR requires host, port, client_id from config
+            broker = IBKRClient(
+                host=broker_config.get('host', '127.0.0.1'),
+                port=broker_config.get('port', 7497),
+                client_id=broker_config.get('client_id', 1)
+            )
+            logging.info(f"Using Broker Client: {broker.__class__.__name__}")
+        except Exception as e:
+            # GRACEFUL FALLBACK if IBKR connection fails
+            logging.critical(f"IBKRClient connection failed. Falling back to Mock. Error: {e}")
+            broker = MockBrokerClient(initial_cash=initial_cash)
+            logging.info(f"Using Broker Client: {broker.__class__.__name__}")
+
+    elif broker_type == 'boursorama' and BoursoramaBrokerClient is not None:
+        # Boursorama is a mock/notification-only client in this architecture
+        broker = BoursoramaBrokerClient(
+            initial_cash=initial_cash,
+            notify_manager=notify_manager # Pass the manager to Boursorama for internal notification
+        )
+        logging.info(f"Using Broker Client: {broker.__class__.__name__}")
+
+    else:
+        # Default or if type is explicitly 'mock' or client is unavailable
+        broker = MockBrokerClient(initial_cash=initial_cash)
+        logging.info(f"Using Broker Client: {broker.__class__.__name__}")
+
+    # 3. Run Execution
+    if broker:
+        try:
+            # Pass the initialized broker client to the execution function
+            run_live_execution(config, notify_manager, broker)
+        except Exception as e:
+            logging.error(f"Critical error during live execution run: {e}", exc_info=True)
 
 if __name__ == '__main__':
     main()

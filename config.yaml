@@ -57,3 +57,46 @@ output_dir: "./results"
 # Optional: dry-run trading later (for future broker integration)
 dry_run: true
 broker: "none"                  # Will be "ibkr" or "boursorama" later
+
+# ... (existing config like assets, start_date, etc.)
+
+# Add this section near the top or bottom of config.yaml
+
+# ==============================================================================
+# --- LIVE BROKER SETTINGS ---
+# ==============================================================================
+live_broker:
+  # Choose the execution method: "mock", "boursorama" (NotificationClient), or "ibkr" (IBKRClient)
+  type: "boursorama" # <--- CHANGE THIS TO "ibkr"
+
+  # Initial cash for *Mock* or *Boursorama* client (ignored by IBKR)
+  manual_initial_cash: 100000.0
+
+  ibkr:
+    host: "127.0.0.1"
+    port: 7497 # TWS/Gateway Port (7496 for paper, 7497 for live). IMPORTANT: Use the correct one.
+    client_id: 1 # Must be a unique integer for this application instance
+
+# ==============================================================================
+# --- NOTIFICATION SETTINGS ---
+# ==============================================================================
+notification:
+  # General settings for notifications
+  enabled: True
+  #types: ["Email", "WhatsApp"] # You can choose one or both
+  types: ["Email"] # You can choose one or both
+
+  # --- EMAIL CONFIGURATION (Using a service like Gmail, Outlook, etc.) ---
+  email:
+    smtp_server: "smtp.gmail.com"  # e.g., smtp.gmail.com (Gmail) or smtp-mail.outlook.com (Outlook)
+    smtp_port: 587
+    sender_email: "haithem.bilel@gmail.com"
+    sender_password: "szmn edpq zswz zaxf" # Use an App Password, NOT your main password
+    recipient_email: "haithem.bilel@gmail.com"
+  # --- WHATSAPP CONFIGURATION (Using Twilio) ---
+  # NOTE: You must install the twilio library: pip install twilio
+  #whatsapp:
+  #  account_sid: "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" # Your Twilio Account SID
+  #  auth_token: "your_auth_token" # Your Twilio Auth Token
+  #  twilio_number: "whatsapp:+14155238886" # The Twilio Sandbox/Approved WhatsApp number
+  #  recipient_number: "whatsapp:+33612345678" # Your WhatsApp number (e.g., in E.164 format)

@@ -14,6 +14,7 @@ import os
 import logging
 import shutil
 import itertools
+from dpm_core.clients_notify import NotificationManager
 
 # Set logging to INFO
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -114,6 +115,46 @@ class MockBrokerClient(BrokerClient):
         self._portfolio['cash'] += cash_change
 
         return {'status': 'MOCKED', 'action': action, 'quantity': abs(order_qty)}
+
+class BoursoramaBrokerClient(MockBrokerClient):
+    """
+    A concrete implementation for Boursorama (notification-only).
+    Inherits mock functionality but overrides execute_order to send a notification
+    after the mock trade is processed.
+    """
+    def __init__(self, initial_cash: float = 100000.0, notify_manager: NotificationManager = None):
+        super().__init__(initial_cash)
+        self.notify_manager = notify_manager
+        logging.info(f"BoursoramaBrokerClient initialized with ${initial_cash:,.2f} initial cash.")
+
+    def execute_order(self, ticker: str, target_allocation: float, current_price: float) -> dict:
+        # Step 1: Execute the trade logic (same as Mock, updates internal state)
+        order_result = super().execute_order(ticker, target_allocation, current_price)
+
+        status = order_result.get('status')
+
+        # Step 2: Send Notification if a trade occurred (Logic moved from live_engine.py)
+        if status != 'NO_TRADE' and self.notify_manager:
+
+            # Recalculate portfolio state based on updated internal state
+            new_qty = self.get_current_position(ticker)
+            new_cash = self.get_current_cash()
+            new_value = new_qty * current_price
+            new_total_equity = new_cash + new_value
+
+            subject = f"Boursorama Trade Alert: {ticker} ({status})"
+            body = (
+                f"Trade initiated for {ticker}.\n"
+                f"Target Allocation: {target_allocation:.1%}\n"
+                f"Execution Price: {current_price:.2f}\n"
+                f"New Portfolio State:\n"
+                f"  Cash: ${new_cash:,.2f}\n"
+                f"  Position ({new_qty:.2f} Qty): ${new_value:,.2f}\n"
+                f"  Total Equity: ${new_total_equity:,.2f}"
+            )
+            self.notify_manager.notify(subject, body)
+
+        return order_result
 
 # ==============================================================================
 # --- EXISTING CORE CLASSES ---
