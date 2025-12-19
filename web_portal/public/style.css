@@ -1,0 +1,218 @@
+/* web_portal/public/style.css */
+
+:root {
+    --primary-color: #007bff;
+    --background-color: #1e1e1e;
+    --card-background: #252526;
+    --text-color: #f1f1f1;
+    --border-color: #333;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    margin: 0;
+    padding: 0;
+}
+
+#root {
+    display: flex;
+    min-height: 100vh;
+}
+
+/* Navigation Bar Styling */
+.navbar {
+    width: 200px;
+    background-color: var(--card-background);
+    padding: 20px;
+    box-shadow: 2px 0 5px rgba(0, 0, 0, 0.5);
+}
+
+.navbar h2 {
+    color: var(--primary-color);
+    margin-top: 0;
+}
+
+.navbar button {
+    display: block;
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 10px;
+    background-color: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    cursor: pointer;
+    text-align: left;
+    transition: background-color 0.2s, color 0.2s;
+}
+
+.navbar button:hover {
+    background-color: #3a3a3a;
+}
+
+.navbar button.active {
+    background-color: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+
+/* Main Content Area */
+.main-content {
+    flex-grow: 1;
+    padding: 20px;
+}
+
+/* Dashboard Card Styling */
+.card {
+    background-color: var(--card-background);
+    padding: 20px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+
+    /* ADD THESE TWO LINES */
+    overflow: hidden;
+    min-width: 0;     /* Critical for Grid/Flex child stability */
+}
+
+/* Ensure the grid doesn't grow infinitely */
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 20px;
+    width: 100%;      /* Force it to stay within parent */
+    box-sizing: border-box;
+}
+
+.card h3 {
+    margin-top: 0;
+    color: var(--primary-color);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 10px;
+    margin-bottom: 15px;
+}
+
+/* State Machine Visualizer */
+.state-machine-container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 15px;
+    padding: 10px;
+    background: #1e1e1e;
+    border-radius: 10px;
+}
+
+.state-node {
+    flex: 1;
+    text-align: center;
+    padding: 12px 5px;
+    border-radius: 8px;
+    font-size: 0.75rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    color: #555;
+    background: #2d2d2d;
+    border: 2px solid transparent;
+    transition: all 0.4s ease;
+}
+
+.state-connector {
+    width: 20px;
+    height: 2px;
+    background: #333;
+}
+
+/* Dynamic Active States */
+.state-node.active-cash {
+    background: #ff4d4d !important; /* Bright Red */
+    color: #ffffff !important;      /* White text for contrast */
+    border: 2px solid #ff1a1a !important;
+    box-shadow: 0 0 15px rgba(255, 77, 77, 0.5); /* Red Glow */
+}
+
+.state-node.active-partial {
+    background: #ff9f40 !important; /* Orange */
+    color: #000000 !important;
+    box-shadow: 0 0 15px rgba(255, 159, 64, 0.5);
+}
+
+.state-node.active-invested {
+    background: #4bc0c0 !important; /* Green/Teal */
+    color: #000000 !important;
+    box-shadow: 0 0 15px rgba(75, 192, 192, 0.5);
+}
+
+/* Add to style.css for Heatmap support */
+.heatmap-cell {
+    padding: 10px;
+    text-align: center;
+    border: 1px solid var(--border-color);
+}
+.return-pos-high { background-color: #1b5e20; color: white; } /* Deep Green */
+.return-pos-low  { background-color: #4caf50; color: black; } /* Light Green */
+.return-neg      { background-color: #b71c1c; color: white; } /* Red */
+
+/* Heatmap Cell Colors */
+.heatmap-table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+.heatmap-table th, .heatmap-table td { border: 1px solid #333; padding: 8px; text-align: center; }
+.ret-pos { background-color: rgba(0, 255, 0, 0.2); color: #afffaf; }
+.ret-neg { background-color: rgba(255, 0, 0, 0.2); color: #ffafaf; }
+.ret-neutral { background-color: #2d2d2d; color: #888; }
+
+/* Journal Specific Styles */
+.summary-ribbon {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+    margin-bottom: 25px;
+}
+
+.summary-ribbon .card {
+    padding: 15px;
+    text-align: center;
+    border-top: 4px solid var(--primary-color); /* Matches your theme */
+}
+
+.badge {
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-weight: bold;
+}
+
+.status-open {
+    background-color: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeeba;
+}
+
+.status-closed {
+    background-color: #d1ecf1;
+    color: #0c5460;
+    border: 1px solid #bee5eb;
+}
+
+/* Base style for the Type badge */
+.type-badge {
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-weight: bold;
+    color: #ffffff !important; /* Forces white text */
+    font-size: 0.8rem;
+    display: inline-block;
+    min-width: 50px;
+    text-align: center;
+}
+
+/* Green background for LONG */
+.type-long {
+    background-color: #28a745;
+    border: 1px solid #1e7e34;
+}
+
+/* Red background for EXIT/Others */
+.type-exit {
+    background-color: #dc3545;
+    border: 1px solid #bd2130;
+}

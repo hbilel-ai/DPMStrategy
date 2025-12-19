@@ -15,6 +15,8 @@ import logging
 import shutil
 import itertools
 from dpm_core.clients_notify import NotificationManager
+from config.settings import settings
+
 
 # Set logging to INFO
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -49,11 +51,73 @@ class MockBrokerClient(BrokerClient):
     A concrete implementation of BrokerClient that simulates execution.
     This tracks mock cash and positions for logging purposes.
     """
+    # 1. FIX THE SIGNATURE to accept live_ticker
+    def __init__(self, initial_cash: float = 100000.0, db_manager=None, live_ticker: str = None):
+        self._portfolio: Dict[str, Any] = {
+            'cash': initial_cash,
+            'positions': {}, # Key: Ticker, Value: Quantity
+            'last_trade_time': None
+        }
+        self.db_manager = db_manager
+        self.initial_cash = initial_cash
+        self.live_ticker = live_ticker # <--- STORE THE TICKER HERE
 
-    def __init__(self, initial_cash: float = 100000.0):
-        # Simplistic portfolio tracking:
-        self._portfolio = {'cash': initial_cash, 'positions': {}}
-        logging.info("MockBrokerClient initialized with $100,000.0 initial cash.")
+        if self.db_manager:
+            self._load_state_from_db(initial_cash)
+
+    def _load_state_from_db(self, initial_cash: float):
+        """Retrieves the latest portfolio state (cash and position) from the DB."""
+        if not self.db_manager:
+            return
+
+        # CHANGE: Use the stored ticker instead of global settings
+        live_ticker = self.live_ticker
+        if not live_ticker:
+             logging.warning("BROKER_DEBUG: Cannot load position state, live_ticker is missing.")
+             return
+        # --- DEBUG TRACE ADDITION (2a of 2) ---
+        logging.info(f"BROKER_DEBUG: Live Ticker used for lookup: {live_ticker}")
+        # --- END DEBUG TRACE ---
+
+        # --- 1. Load Cash State from Snapshot (STILL REQUIRED) ---
+        latest_snapshot = self.db_manager.get_latest_portfolio_snapshot()
+
+        if latest_snapshot:
+            self._portfolio['cash'] = latest_snapshot['cash_balance']
+            logging.info(f"Broker state loaded cash: ${self._portfolio['cash']:,.2f}")
+        else:
+            self._portfolio['cash'] = initial_cash
+            logging.info(f"Broker starting with initial cash: ${initial_cash:,.2f}")
+
+        # --- 2. Reconstruct Positions from CUMULATIVE Trades (THE FIX) ---
+        # The internal position tracking dictionary is reset on every run:
+        self._portfolio['positions'] = {}
+
+        # Call the new cumulative aggregation function
+        net_qty = self.db_manager.get_net_position_quantity(live_ticker)
+
+        # --- NEW DEBUG CALL ---
+        if net_qty == 0.0:
+            logging.warning("Broker failed to load position. Dumping trade orders for diagnosis.")
+            self.db_manager.debug_dump_all_state(live_ticker)
+        # --- END NEW DEBUG CALL ---
+
+        # --- DEBUG TRACE ADDITION (2b of 2) ---
+        logging.info(f"BROKER_DEBUG: Net Qty returned by DBManager: {net_qty}")
+        # --- END DEBUG TRACE ---
+
+        if net_qty > 0.0:
+            self._portfolio['positions'][live_ticker] = net_qty
+            logging.info(f"Broker state loaded position: {net_qty:.2f} Qty of {live_ticker} (Cumulative).")
+        else:
+            self._portfolio['positions'][live_ticker] = 0.0
+            logging.info("Broker confirmed zero net position.")
+
+        # --- Final Portfolio State Check ---
+        logging.info(f"BROKER_DEBUG: Final internal cash: {self._portfolio['cash']}")
+        logging.info(f"BROKER_DEBUG: Final internal position: {self._portfolio['positions']}")
+
+        # --- 3. Now the broker has the correct cash and position state ---
 
     def get_current_position(self, trade_ticker: str) -> float:
         """Returns the current quantity held (0 for a new asset)."""
@@ -65,16 +129,14 @@ class MockBrokerClient(BrokerClient):
 
     def execute_order(self, ticker: str, target_allocation: float, current_price: float) -> Any:
         """
-        Calculates the required order (BUY/SELL) to meet the target allocation
-        and logs the intention without actual broker communication.
+        Calculates the required order (BUY/SELL) to meet the target allocation,
+        updates the mock state, and persists the trade to the database.
         """
         # Determine current equity for target calculation
         current_qty = self.get_current_position(ticker)
         current_value = current_qty * current_price
 
         # NOTE: This uses the initial cash if no other trades were mocked yet.
-        # For a full simulation, this would track all past mock trades.
-        # For this single run, it reflects the cash/position *before* the trade.
         total_equity = self._portfolio['cash'] + sum(qty * current_price for t, qty in self._portfolio['positions'].items())
 
         # Calculate target quantity based on total equity
@@ -82,8 +144,10 @@ class MockBrokerClient(BrokerClient):
             logging.error(f"Cannot execute order for {ticker}: Current price is zero or negative.")
             return None
 
+        # --- FIX FOR NAME ERROR: Ensure these variables are defined ---
         target_value = total_equity * target_allocation
         target_qty = target_value / current_price
+        # --- END FIX ---
 
         # Order needed (positive for BUY, negative for SELL)
         order_qty = target_qty - current_qty
@@ -94,11 +158,12 @@ class MockBrokerClient(BrokerClient):
             return None
 
         action = "BUY" if order_qty > 0 else "SELL"
+        trade_time = datetime.now() # Capture the time for logging and DB write
 
         # Log the mock order
         logging.info(
             f"--- MOCK ORDER EXECUTED ---"
-            f"\n  Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            f"\n  Date: {trade_time.strftime('%Y-%m-%d %H:%M:%S')}"
             f"\n  Asset: {ticker}"
             f"\n  Action: {action} (from {current_qty:.2f} qty to {target_qty:.2f} qty)"
             f"\n  Order Qty: {abs(order_qty):.2f}"
@@ -114,6 +179,29 @@ class MockBrokerClient(BrokerClient):
         cash_change = -order_qty * current_price
         self._portfolio['cash'] += cash_change
 
+        # ====================================================================
+        # --- CRITICAL FIX: PERSIST TRADE TO DATABASE & DUMP ---
+        # ====================================================================
+
+        # 1. Prepare trade data for DB persistence
+        order_data = {
+            'execution_time': trade_time,
+            'ticker': ticker,
+            'quantity': abs(order_qty),
+            'price': current_price,
+            'order_type': f"{action} (from {current_qty:.2f} qty to {target_qty:.2f} qty)",
+            'status': 'FILLED'
+        }
+
+        # 2. Save the executed trade record
+        if self.db_manager:
+            self.db_manager.save_trade_order(order_data)
+
+            # 3. DEBUG TRACE: Immediate Post-Save Dump to Validate Write
+            logging.info("TRADE_SAVE_CONFIRMATION: Dumping DB state immediately after save_trade_order.")
+            self.db_manager.debug_dump_all_state(ticker)
+            # --- END DEBUG TRACE ---
+
         return {'status': 'MOCKED', 'action': action, 'quantity': abs(order_qty)}
 
 class BoursoramaBrokerClient(MockBrokerClient):
@@ -122,14 +210,30 @@ class BoursoramaBrokerClient(MockBrokerClient):
     Inherits mock functionality but overrides execute_order to send a notification
     after the mock trade is processed.
     """
-    def __init__(self, initial_cash: float = 100000.0, notify_manager: NotificationManager = None):
-        super().__init__(initial_cash)
+    # FIX 3: Update Boursorama signature to accept db_manager and pass it to super
+    def __init__(self, initial_cash: float = 100000.0, notify_manager: NotificationManager = None, db_manager=None, live_ticker: str = None):
+        # Pass live_ticker to the parent class
+        super().__init__(initial_cash=initial_cash, db_manager=db_manager, live_ticker=live_ticker)
         self.notify_manager = notify_manager
-        logging.info(f"BoursoramaBrokerClient initialized with ${initial_cash:,.2f} initial cash.")
+
+        # If DB was used, the parent class already logged the starting cash.
+        if not self.db_manager or not self.db_manager.get_latest_portfolio_snapshot():
+            logging.info(f"BoursoramaBrokerClient initialized with ${initial_cash:,.2f} initial cash.")
 
     def execute_order(self, ticker: str, target_allocation: float, current_price: float) -> dict:
         # Step 1: Execute the trade logic (same as Mock, updates internal state)
         order_result = super().execute_order(ticker, target_allocation, current_price)
+
+        if order_result is None:
+            # If the base class returned None, it means NO_TRADE was executed.
+            # We must return a dictionary to satisfy the calling logic (live_engine.py).
+            return {
+                'status': 'NO_TRADE',
+                'action': 'HOLD',
+                'order_qty': 0.0,
+                'price': current_price,
+                'message': 'No material change in target allocation.'
+            }
 
         status = order_result.get('status')
 

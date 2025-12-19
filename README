@@ -1,23 +1,38 @@
-DPMStrategy/
-├── dpm_core/
-│   ├── __init__.py                # To make 'dpm_core' a Python package
-│   ├── strategy_core.py           # Renamed: Contains all existing class definitions:
-│   │                                  - DataFetcher, SignalGenerator (ABC)
-│   │                                  - TMOMSignal, SMASignal
-│   │                                  - DPMAllocator, PortfolioSimulator, TradeTracker
-│   │                                  - PerformanceAnalyzer (with plotting methods)
-│   └── clients_ibkr.py             # Client for live trading
+/trading_system
+├── .gitignore
+├── README.md
+├── requirements.txt         # All Python dependencies
 │
-├── config.yaml                    # Existing: Configuration for parameters (TMOM, SMA, Assets)
-├── backtest_runner.py             # OFF-LINE SIMULATION (your original 'main()' logic)
-├── live_engine.py                 # ON-LINE EXECUTION (daily scheduler script)
-├── web_dashboard.py               # Not yet implemented: Entry point for WEB INTERFACE (Streamlit/Dash app)
-├── dpm_live.db                    # Not yet implemented: SQLite Database file (stores live equity curve, state)
+├── /config                  # System configuration and settings
+│   └── settings.py          # Environment variables, DB URL, API keys, etc.
 │
-├── data_cache/                    # Existing: Cached historical data from yfinance
-│   └── QQQ_2010-07-01_2025-12-31.csv
+├── /data_layer              # Database access and ORM models
+│   ├── __init__.py
+│   ├── db_manager.py        # The DBManager class (our current skeleton)
+│   └── models.py            # SQLAlchemy/ORM definitions (e.g., PortfolioSnapshot, TradeOrder)
 │
-└── results/                       # Existing: Backtesting reports and data
-    ├── *_professional_report.pdf
-    ├── *_full_data.csv            # (Equity Curve, Allocation)
-    └── ...
+├── /application_logic       # Core business logic, engine, and analytics
+│   ├── __init__.py
+│   ├── live_engine.py       # The existing LiveEngine logic
+│   ├── backtest_runner.py   # The existing BacktestRunner logic
+│   └── analytics_service.py # The AnalyticsService class (our current skeleton)
+│
+├── /api_gateway             # The web API (FastAPI/Flask) endpoints
+│   ├── __init__.py
+│   ├── api_service.py       # Main FastAPI application instance and endpoints
+│   └── schemas.py           # Pydantic schemas for data validation and API response structure
+│
+├── web_portal/
+│   ├── public/
+│   │   ├── index.html     <-- The main application shell
+│   │   └── style.css      <-- Basic styling
+│   └── src/
+│       ├── components/
+│       │   ├── NavBar.js
+│       │   ├── CurrentStatus.js
+│       │   └── PerformanceSummary.js
+│       ├── views/
+│       │   ├── DashboardView.js  <-- The A. Live Trading Dashboard
+│       │   ├── ReportsView.js    <-- The B. Historical Reports View
+│       │   └── TradeLogView.js   <-- The C. Trade Log/Audit View
+│       └── App.js              <-- The main application component
