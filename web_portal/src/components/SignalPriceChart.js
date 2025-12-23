@@ -1,4 +1,5 @@
-const API_ENDPOINT = 'http://192.168.1.17:8000/api/v1/charts/signal_price?ticker=LQQ.PA&start_date=2024-01-01';
+const API_BASE = `http://${window.location.hostname}:8000`;
+const API_ENDPOINT = `${API_BASE}/api/v1/charts/signal_price?ticker=LQQ.PA&start_date=2024-01-01`;
 
 let currentChart = null;
 
@@ -28,7 +29,7 @@ async function fetchAndRender(days = 365) {
         startDate.setDate(startDate.getDate() - days);
         const dateStr = startDate.toISOString().split('T')[0];
 
-        const url = `http://192.168.1.17:8000/api/v1/charts/signal_price?ticker=LQQ.PA&start_date=${dateStr}`;
+        const url = `${API_BASE}/api/v1/charts/signal_price?ticker=LQQ.PA&start_date=${dateStr}`;
         const response = await fetch(url);
         const data = await response.json();
 

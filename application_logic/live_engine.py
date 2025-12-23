@@ -34,7 +34,7 @@ os.makedirs(out_dir, exist_ok=True)
 # --- LIVE TRADING EXECUTION FUNCTION ---\
 # ==============================================================================
 # Helper function to save a MarketSignal record
-def _log_market_and_signal(db_manager: DBManager, ticker: str, timestamp: datetime, price: float, signal_data: dict) -> int | None:
+def _log_market_and_signal(db_manager: DBManager, ticker: str, timestamp: datetime, price: float, signal_data: dict, position: float) -> int | None:
     """Saves the market state and signal output to the DB, returns the new signal ID."""
     try:
         signal = MarketSignal(
@@ -44,6 +44,7 @@ def _log_market_and_signal(db_manager: DBManager, ticker: str, timestamp: dateti
             signal_A_value=signal_data['tmom_signal'],
             signal_B_value=signal_data['sma_signal'],
             action_alert=signal_data['action_alert'],
+            position=position,
             is_live_signal=True # Always True in this execution context
         )
 
@@ -203,7 +204,8 @@ def run_live_execution(config, notify_manager: NotificationManager, broker: Brok
         trade_ticker,
         signal_timestamp,
         current_price,
-        signal_data
+        signal_data,
+        target_allocation
     )
 
     logging.info(
@@ -293,7 +295,7 @@ def run_live_execution(config, notify_manager: NotificationManager, broker: Brok
         trade_signal_id=last_signal_id # This isn't critical for the snapshot but good for auditing
     )
     logging.info("Daily Portfolio Snapshot and Market Signals successfully persisted.")
-    logging.info("Daily state successfully persisted to dpm_live.db")
+    logging.info(f"Daily state successfully persisted to {settings.DATABASE_URL.split('/')[-1]}")
 
 # =============================================================================
 # --- MAIN EXECUTION ENTRY POINT ---

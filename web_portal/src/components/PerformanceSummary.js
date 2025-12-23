@@ -1,6 +1,7 @@
 // web_portal/src/components/PerformanceSummary.js
 
-const API_ENDPOINT = 'http://192.168.1.17:8000/api/v1/performance/summary';
+const API_BASE = `http://${window.location.hostname}:8000`;
+const API_ENDPOINT = `${API_BASE}/api/v1/performance/summary`;
 
 export function PerformanceSummary() {
     return `

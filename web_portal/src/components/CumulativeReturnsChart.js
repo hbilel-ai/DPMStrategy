@@ -1,5 +1,6 @@
 // Change this to match your actual local API IP if different
-const API_BASE = 'http://192.168.1.17:8000/api/v1/analytics/cumulative_returns';
+const API_BASE = `http://${window.location.hostname}:8000`;
+const API_ENDPOINT = `${API_BASE}/api/v1/analytics/cumulative_returns`;
 
 let equityChart = null;
 
@@ -28,7 +29,7 @@ export async function fetchAndRenderEquity(days = 365) {
 
     try {
         // Fetch from the evolved backend endpoint with the 'days' parameter
-        const response = await fetch(`${API_BASE}?days=${days}`);
+        const response = await fetch(`${API_ENDPOINT}?days=${days}`);
         const data = await response.json();
 
         if (equityChart) equityChart.destroy();

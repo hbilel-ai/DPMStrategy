@@ -250,32 +250,31 @@ class AnalyticsService:
 
     # --- Charting Data Prep Implementation ---
     def get_signal_chart_data(self, ticker: str, start_date: str):
-        effective_start = start_date if start_date else "2024-01-01"
-        raw_data, live_start_date = self.db.get_price_and_signal_data(ticker, effective_start)
+        query = """
+            SELECT timestamp, close_price, signal_A_value, signal_B_value, position
+            FROM market_signal
+            WHERE ticker = ? AND timestamp >= ?
+            ORDER BY timestamp ASC
+        """
+        # Use self.db as defined in your __init__
+        df = pd.read_sql(query, self.db.engine, params=(ticker, start_date))
 
-        if not raw_data:
-            return {"timestamps": [], "price": [], "component_signals": [], "position": [], "trading_start_ts": None}
+        # Ensure timestamp is a datetime object
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
 
-        # 1. Derive Position (Exposure)
-        # Logic: If Signal A AND Signal B are 1, Position = 1.0. If only one is 1, Position = 0.5.
-        positions = []
-        for i in range(len(raw_data['signal_A'])):
-            val_a = raw_data['signal_A'][i] or 0
-            val_b = raw_data['signal_B'][i] or 0
-            positions.append((val_a + val_b) / 2) # Normalizes to 0, 0.5, or 1.0
-
-        component_signals = []
-        if 'signal_A' in raw_data:
-            component_signals.append({"name": "TMOM", "data": raw_data['signal_A']})
-        if 'signal_B' in raw_data:
-            component_signals.append({"name": "SMA", "data": raw_data['signal_B']})
+        # --- NO OVERWRITE HERE ---
+        # We deleted the line: df['position'] = (sig_A + sig_B) / 2
+        # This keeps the DB truth (0.0 or 1.0)
 
         return {
-            "timestamps": raw_data['date'],
-            "price": raw_data['price'],
-            "component_signals": component_signals,
-            "position": positions, # Now populated
-            "trading_start_ts": live_start_date
+            # FIX: map(str, ...) or .astype(str) is safer than .dt.isoformat() on a Series
+            "timestamps": df['timestamp'].dt.strftime('%Y-%m-%dT%H:%M:%S').tolist(),
+            "price": df['close_price'].tolist(),
+            "position": df['position'].tolist(),
+            "component_signals": [
+                {"name": "TMOM", "data": df['signal_A_value'].tolist()},
+                {"name": "SMA", "data": df['signal_B_value'].tolist()}
+            ]
         }
 
     def get_current_position_state(self, ticker: str = "LQQ.PA"):
@@ -342,6 +341,7 @@ class AnalyticsService:
         closed_trades = [t for t in trades if t['status'] == 'Closed']
         win_rate = 0
         total_pl = 0
+        avg_profit = 0.0
 
         if closed_trades:
             wins = [t for t in closed_trades if t['pl_pct'] > 0]

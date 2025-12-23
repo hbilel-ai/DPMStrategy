@@ -1,6 +1,6 @@
 // web_portal/src/components/CurrentStatus.js
-
-const API_ENDPOINT = 'http://192.168.1.17:8000/api/v1/kpis/current';
+const API_BASE = `http://${window.location.hostname}:8000`;
+const API_ENDPOINT = `${API_BASE}/api/v1/kpis/current`;
 
 export function CurrentStatus() {
     return `<div class="card current-status-card" id="current-status"><h3>1. Current Status</h3><p>Loading...</p></div>`;

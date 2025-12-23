@@ -1,4 +1,5 @@
 // web_portal/src/components/ReportsEngine.js
+const API_BASE = `http://${window.location.hostname}:8000`;
 
 let historicalChart = null;
 
@@ -11,7 +12,7 @@ export function initReportsView() {
         btn.innerText = "Loading...";
 
         try {
-            const response = await fetch(`http://192.168.1.17:8000/api/v1/performance/history?year=${year}`);
+            const response = await fetch(`${API_BASE}/api/v1/performance/history?year=${year}`);
             const data = await response.json();
 
             // --- DEBUG TRACES START ---

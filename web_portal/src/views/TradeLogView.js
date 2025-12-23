@@ -1,4 +1,5 @@
 // web_portal/src/views/TradeLogView.js
+const API_BASE = `http://${window.location.hostname}:8000`;
 
 export function TradeLogView() {
     return `
@@ -66,7 +67,7 @@ export async function initTradeLogView() {
     const loadData = async () => {
         try {
             // Update to your actual API URL
-            const response = await fetch(`http://192.168.1.17:8000/api/v1/trades/journal?ticker=LQQ.PA`);
+            const response = await fetch(`${API_BASE}/api/v1/trades/journal?ticker=LQQ.PA`);
             const data = await response.json();
             
             cachedJournalData = data.trades;

@@ -65,7 +65,9 @@ def get_current_kpis(ticker: str = "LQQ.PA"):
 
 @app.get("/api/v1/charts/signal_price")
 def get_signal_price_chart_data(ticker: str = "LQQ.PA", start_date: str = '2020-01-01'):
-    return analytics_service.get_signal_chart_data(ticker, start_date)
+
+    data = analytics_service.get_signal_chart_data(ticker, start_date)
+    return data
 
 # Unified Trade Log
 @app.get("/api/v1/trades")

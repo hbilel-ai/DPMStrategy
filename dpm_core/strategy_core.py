@@ -368,29 +368,40 @@ class DPMAllocator:
         return allocations.dropna(), daily_tmom_sig.dropna(), daily_sma_sig.dropna() # <-- RETURN SIGNALS
 
 class PortfolioSimulator:
-    def __init__(self, transaction_cost: float = 0.001):
-        self.transaction_cost = transaction_cost
+    def __init__(self, transaction_cost: float = 0.001, slippage: float = 0.0005):
+        self.transaction_cost = transaction_cost  # Commissions / Fees
+        self.slippage = slippage                  # Price impact / Bid-Ask spread
 
-    def simulate(self, allocations: pd.Series, asset_returns: pd.Series, rf_rates: pd.Series):
+    def simulate(self, allocations: pd.Series, asset_returns: pd.Series, rf_rates: pd.Series, lag: int = 1):
+        # 1. ALIGN DATA
         idx = allocations.index.intersection(asset_returns.index).intersection(rf_rates.index)
         if len(idx) == 0:
             logging.warning("No overlapping dates — skipping simulation")
             return pd.DataFrame(index=pd.DatetimeIndex([]))
-        alloc = allocations.reindex(idx).fillna(0)
-        ret = asset_returns.reindex(idx).fillna(0)
-        rf = rf_rates.reindex(idx).fillna(0) / 252
 
-        costs = alloc.diff().abs().fillna(0) * self.transaction_cost
-        port_ret = alloc * ret + (1 - alloc) * rf - costs
+        # FIX 1: Defined 'lag' in the function signature above.
+        # This shifts the signal by 1 day to account for the US/EU time difference.
+        effective_alloc = allocations.shift(lag).reindex(idx).fillna(0)
+
+        # 2. REALISTIC COST CALCULATION
+        total_friction = self.transaction_cost + self.slippage
+        trade_costs = effective_alloc.diff().abs().fillna(0) * total_friction
+
+        # 3. RETURN CALCULATION
+        # (Exposure * Asset Return) + (Cash * Daily Risk-Free) - Trade Costs
+        port_ret = (effective_alloc * asset_returns) + ((1 - effective_alloc) * (rf_rates/252)) - trade_costs
+
         equity = (1 + port_ret).cumprod()
         if len(equity) > 0 and not pd.isna(equity.iloc[0]):
             equity = equity / equity.iloc[0]
 
-        pos_numeric = (alloc * 2).astype(int)
+        # FIX 2: Corrected 'alloc' to 'effective_alloc' to match your naming.
+        pos_numeric = (effective_alloc * 2).astype(int)
+
         return pd.DataFrame({
             'equity_curve': equity,
             'position_numeric': pos_numeric,
-            'allocations': alloc
+            'allocations': effective_alloc
         }, index=idx)
 
 class TradeTracker:
