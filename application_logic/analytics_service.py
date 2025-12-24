@@ -16,28 +16,46 @@ class AnalyticsService:
     def __init__(self, db_manager: DBManager):
         self.db = db_manager
 
-    def get_cumulative_returns(self, start_date: str = None):
+    def get_cumulative_returns(self, start_date: str = None, benchmark_ticker: str = "LQQ.PA"):
         """
-        EVOLVED: Now accepts a start_date to support timeframe filtering (1M, 6M, ALL).
+        EVOLVED: Now returns multiple series (Strategy vs Benchmark).
         """
-        # 1. Fallback logic: If no start_date provided, default to current year
         if not start_date:
             start_date = datetime.now().replace(month=1, day=1).strftime('%Y-%m-%d')
 
-        # 2. Fetch data using the existing calculation logic
-        # This calls self.calculate_cumulative_returns which filters snapshots by start_date
-        result = self.calculate_cumulative_returns(start_date)
+        # 1. Calculate Strategy Cumulative Returns
+        strategy_res = self.calculate_cumulative_returns(start_date)
+        
+        # 2. Fetch & Calculate Benchmark Cumulative Returns
+        # We fetch daily prices for the benchmark ticker starting from start_date
+        bench_data = self.db.get_historical_prices(benchmark_ticker, start_date)
+        
+        benchmark_series = []
+        if bench_data:
+            # Re-index to 0% at the start of the period
+            initial_price = bench_data[0]['price']
+            for entry in bench_data:
+                cum_ret = (entry['price'] / initial_price) - 1
+                benchmark_series.append({
+                    "date": entry['date'],
+                    "equity": round(float(cum_ret), 4)
+                })
 
-        # 3. Reformat for Frontend: [{"date":..., "equity":...}]
-        formatted_data = []
-        for i in range(len(result['timestamps'])):
-            formatted_data.append({
-                "date": result['timestamps'][i],
-                "equity": result['cumulative_returns'][i]
+        # 3. Format Strategy data
+        strategy_series = []
+        for i in range(len(strategy_res['timestamps'])):
+            strategy_series.append({
+                "date": strategy_res['timestamps'][i],
+                "equity": strategy_res['cumulative_returns'][i]
             })
 
-        return formatted_data
-
+        # Return a dictionary of series for scalability
+        return {
+            "strategy": strategy_series,
+            "benchmark": benchmark_series,
+            "benchmark_label": benchmark_ticker
+        }
+    
     # --- Utility Method to Get Returns Series ---
     def _get_daily_returns_series(self, start_date) -> pd.Series:
         """Helper to retrieve and calculate the core daily returns series."""

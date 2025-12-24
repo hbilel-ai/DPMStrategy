@@ -1,11 +1,17 @@
 # api_service.py
 from fastapi import FastAPI, HTTPException  # Added HTTPException
 from pydantic import BaseModel
+from typing import List, Dict, Any
 from starlette.middleware.cors import CORSMiddleware
 from data_layer.db_manager import DBManager
 from application_logic.analytics_service import AnalyticsService
 from config.settings import settings
 from datetime import datetime, timedelta
+
+class EquityChartResponse(BaseModel):
+    strategy: List[Dict[str, Any]]
+    benchmark: List[Dict[str, Any]]
+    benchmark_label: str
 
 class CumulativeReturnPoint(BaseModel):
     date: str
@@ -39,8 +45,28 @@ def get_performance_summary(start_date: str = '2020-01-01'):
 
 @app.get("/api/v1/charts/returns")
 def get_cumulative_returns_chart_data(days: int = 365):
+    """
+    EVOLVED: Fetches timeframe-based cumulative returns for both 
+    the Strategy and the Benchmark defined in config.yaml.
+    """
+    # 1. Calculate the start date based on the 'days' parameter
     start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
-    return analytics_service.calculate_cumulative_returns(start_date)
+    
+    # 2. Extract benchmark ticker from settings (Asset 0)
+    # This ensures it matches your config.yaml: assets[0].benchmark_ticker
+    benchmark_ticker = settings.assets[0].benchmark_ticker if settings.assets else "LQQ.PA"
+    
+    try:
+        # 3. Call the evolved service method
+        # Returns: {"strategy": [...], "benchmark": [...], "benchmark_label": "..."}
+        data = analytics_service.get_cumulative_returns(
+            start_date=start_date, 
+            benchmark_ticker=benchmark_ticker
+        )
+        return data
+    except Exception as e:
+        print(f"API Error in charts/returns: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/kpis/current")
 def get_current_kpis(ticker: str = "LQQ.PA"):
@@ -75,9 +101,10 @@ def get_trade_log():
     trades = db_manager.get_executed_trades()
     return {"trades": trades, "count": len(trades)}
 
-@app.get("/api/v1/analytics/cumulative_returns", response_model=list[CumulativeReturnPoint], tags=["Analytics"])
+@app.get("/api/v1/analytics/cumulative_returns", response_model=EquityChartResponse)
 def get_cumulative_returns_data(days: int = 365):
     start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+    # This now returns the Dict {'strategy':..., 'benchmark':...}
     return analytics_service.get_cumulative_returns(start_date=start_date)
 
 @app.get("/api/v1/performance/history")

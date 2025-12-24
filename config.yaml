@@ -28,7 +28,7 @@ start_date: "2015-01-01"        # FR0010342592 launched in 2010
 end_date: "2025-12-31"
 
 # Strategy parameters
-run_sweep: False
+run_sweep: True
 lookback: 12
 sma_period: 21
 algo_mode: 'Conditional'

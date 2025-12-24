@@ -13,7 +13,7 @@ export function DashboardView() {
                 ${PerformanceSummary()}
             </div>
 
-            <div class="card-grid" style="grid-template-columns: 1fr 1fr; margin-top: 20px;">
+            <div class="charts-stack" style="margin-top: 20px; display: flex; flex-direction: column; gap: 20px;">
                 <div class="card">
                     <h3>Strategy Verification (Price vs Signal)</h3>
                     ${SignalPriceChart()}

@@ -24,38 +24,55 @@ export function CumulativeReturnsChart() {
 }
 
 export async function fetchAndRenderEquity(days = 365) {
-    const canvas = document.getElementById('cumulative-returns-chart-canvas');
+    const chartId = 'cumulative-returns-chart-canvas';
+    const canvas = document.getElementById(chartId);
     if (!canvas) return;
 
     try {
-        // Fetch from the evolved backend endpoint with the 'days' parameter
         const response = await fetch(`${API_ENDPOINT}?days=${days}`);
-        const data = await response.json();
+        const data = await response.json(); 
+        // Data is now: { strategy: [...], benchmark: [...], benchmark_label: "..." }
 
-        if (equityChart) equityChart.destroy();
+        if (equityChart) {
+            equityChart.destroy();
+        }
 
-        equityChart = new Chart(canvas.getContext('2d'), {
+        const ctx = canvas.getContext('2d');
+        equityChart = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: data.map(d => d.date),
-                datasets: [{
-                    label: 'Portfolio Value (€)',
-                    data: data.map(d => d.equity),
-                    borderColor: '#4bc0c0',
-                    backgroundColor: 'rgba(75, 192, 192, 0.1)',
-                    fill: true,
-                    tension: 0.1,
-                    pointRadius: 0,
-                    borderWidth: 2
-                }]
+                datasets: [
+                    {
+                        label: 'DPM Strategy',
+                        data: data.strategy.map(d => ({ x: d.date, y: d.equity * 100 })),
+                        borderColor: '#4bc0c0',
+                        backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                        fill: true,
+                        tension: 0.1,
+                        pointRadius: 0
+                    },
+                    {
+                        label: `Benchmark (${data.benchmark_label || 'Target'})`,
+                        data: data.benchmark.map(d => ({ x: d.date, y: d.equity * 100 })),
+                        borderColor: '#ff6384',
+                        borderDash: [5, 5], // Dashed line for visual distinction
+                        fill: false,
+                        tension: 0.1,
+                        pointRadius: 0
+                    }
+                ]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                resizeDelay: 100,
                 interaction: { mode: 'index', intersect: false },
                 plugins: {
                     legend: { display: true, labels: { color: '#ccc' } },
+                    tooltip: {
+                        callbacks: {
+                            label: (context) => `${context.dataset.label}: ${context.parsed.y.toFixed(2)}%`
+                        }
+                    },
                     zoom: {
                         zoom: {
                             wheel: { enabled: true },
@@ -74,13 +91,15 @@ export async function fetchAndRenderEquity(days = 365) {
                         type: 'time',
                         time: { unit: 'month' },
                         grid: { color: '#333' },
-                        ticks: { color: '#888' },
-                        bounds: 'data'
+                        ticks: { color: '#888' }
                     },
                     y: {
                         grid: { color: '#333' },
-                        ticks: { color: '#888' },
-                        title: { display: true, text: 'Value (€)', color: '#ccc' }
+                        ticks: { 
+                            color: '#888',
+                            callback: (value) => value + '%' // Show as percentage
+                        },
+                        title: { display: true, text: 'Cumulative Return (%)', color: '#ccc' }
                     }
                 }
             }

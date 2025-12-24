@@ -426,3 +426,35 @@ class DBManager:
         # Return reversed so latest trades are at the top of the UI
         print(f"DEBUG_JOURNAL: Final journal count: {len(journal)}")
         return list(reversed(journal))
+
+    def get_historical_prices(self, ticker: str, start_date: str) -> List[Dict[str, Any]]:
+        """
+        Fetches historical price data from the MarketSignal table for benchmark comparison.
+        Minimum impact: Uses existing MarketSignal model.
+        """
+        session = self.get_session()
+        try:
+            # Query the MarketSignal table for the specific ticker
+            # We filter by ticker and start_date, ordering by timestamp
+            results = session.query(MarketSignal).filter(
+                MarketSignal.ticker == ticker,
+                MarketSignal.timestamp >= start_date
+            ).order_by(MarketSignal.timestamp.asc()).all()
+
+            # Format for AnalyticsService: List[{"date": "...", "price": ...}]
+            formatted_prices = [
+                {
+                    "date": signal.timestamp.strftime('%Y-%m-%d') if hasattr(signal.timestamp, 'strftime') else str(signal.timestamp),
+                    "price": float(signal.close_price)
+                }
+                for signal in results
+            ]
+            
+            print(f"DEBUG_DB: Retrieved {len(formatted_prices)} price points for benchmark {ticker}")
+            return formatted_prices
+
+        except Exception as e:
+            print(f"DEBUG_DB_ERROR: Failed to fetch prices for {ticker}: {e}")
+            return []
+        finally:
+            session.close()
