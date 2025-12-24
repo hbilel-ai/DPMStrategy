@@ -4,6 +4,22 @@ const API_ENDPOINT = `${API_BASE}/api/v1/analytics/cumulative_returns`;
 
 let equityChart = null;
 
+// 1. New Broadcast function
+const broadcastSync = (chart) => {
+    window.dispatchEvent(new CustomEvent('sync-charts', {
+        detail: { min: chart.scales.x.min, max: chart.scales.x.max, sender: 'equity' }
+    }));
+};
+
+// 2. New Listener
+window.addEventListener('sync-charts', (e) => {
+    if (e.detail.sender !== 'equity' && equityChart) {
+        equityChart.options.scales.x.min = e.detail.min;
+        equityChart.options.scales.x.max = e.detail.max;
+        equityChart.update('none');
+    }
+});
+
 export function CumulativeReturnsChart() {
     return `
         <div class="chart-controls" style="margin-bottom: 10px; display: flex; gap: 10px; flex-wrap: wrap;">
@@ -77,11 +93,15 @@ export async function fetchAndRenderEquity(days = 365) {
                         zoom: {
                             wheel: { enabled: true },
                             pinch: { enabled: true },
-                            mode: 'x',
+                            mode: 'x', 
+                            enabled: true, 
+                            onZoom: ({chart}) => broadcastSync(chart)
                         },
                         pan: {
                             enabled: true,
-                            mode: 'x',
+                            mode: 'x', 
+                            enabled: true, 
+                            onPan: ({chart}) => broadcastSync(chart),
                             threshold: 10,
                         }
                     }

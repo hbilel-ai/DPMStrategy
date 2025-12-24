@@ -3,6 +3,21 @@ const API_ENDPOINT = `${API_BASE}/api/v1/charts/signal_price?ticker=LQQ.PA&start
 
 let currentChart = null;
 
+const broadcastSync = (chart) => {
+    window.dispatchEvent(new CustomEvent('sync-charts', {
+        detail: { min: chart.scales.x.min, max: chart.scales.x.max, sender: 'signal' }
+    }));
+};
+
+// 2. New Listener
+window.addEventListener('sync-charts', (e) => {
+    if (e.detail.sender !== 'signal' && currentChart) {
+        currentChart.options.scales.x.min = e.detail.min;
+        currentChart.options.scales.x.max = e.detail.max;
+        currentChart.update('none');
+    }
+});
+
 export function SignalPriceChart() {
     return `
         <div class="chart-controls" style="margin-bottom: 10px; display: flex; gap: 10px; flex-wrap: wrap;">
@@ -92,8 +107,21 @@ async function fetchAndRender(days = 365) {
                 plugins: {
                     legend: { display: true, labels: { color: '#ccc' } },
                     zoom: {
-                        zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
-                        pan: { enabled: true, mode: 'x', threshold: 10 }
+                        zoom: { 
+                            wheel: { enabled: true }, 
+                            pinch: { enabled: true }, 
+                            mode: 'x', 
+                            enabled: true, 
+                            onZoom: ({chart}) => broadcastSync(chart) 
+                            
+                        },
+                        pan: { 
+                            enabled: true, 
+                            mode: 'x', 
+                            enabled: true, 
+                            onPan: ({chart}) => broadcastSync(chart), 
+                            threshold: 10                             
+                        }
                     }
                 },
                 scales: {
