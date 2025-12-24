@@ -10,6 +10,7 @@ from dpm_core.strategy_core import (
 )
 from dpm_core.clients_notify import NotificationManager
 import pandas as pd
+from dpm_core.db_manager import DBManager
 
 # Dynamic imports for IBKRClient
 try:
@@ -32,6 +33,8 @@ def run_live_execution(config, notify_manager: NotificationManager, broker: Brok
 
     The broker argument is the dynamically loaded client (Mock, Boursorama, or IBKR).
     """
+    # 0. Initialize Database Manager
+    db = DBManager(db_path='dpm_live.db')
 
     # 1. Load Parameters and Setup
     algo_mode = config.get('algo_mode', 'Conditional')
@@ -101,6 +104,11 @@ def run_live_execution(config, notify_manager: NotificationManager, broker: Brok
     tmom_sig_today = int(daily_tmom_sig.iloc[-1])
     sma_sig_today = int(daily_sma_sig.iloc[-1])
 
+    # Determine string representation of state (for DB readability)
+    alloc_state_str = "Cash"
+    if target_allocation == 1.0: alloc_state_str = "Invested"
+    elif target_allocation == 0.5: alloc_state_str = "Partial"
+
     # 5. Get Current Market Price (Execution Price)
     execution_end_date = (today - timedelta(days=1)).strftime('%Y-%m-%d')
     execution_start_date = (today - timedelta(days=5)).strftime('%Y-%m-%d')
@@ -158,6 +166,13 @@ def run_live_execution(config, notify_manager: NotificationManager, broker: Brok
         current_price=current_price
     )
 
+    # --- POST-EXECUTION DATA GATHERING ---
+
+    # Get final numbers from broker (whether trade happened or not)
+    final_qty = broker.get_current_position(trade_ticker)
+    final_cash = broker.get_current_cash()
+    final_equity = final_cash + (final_qty * current_price)
+
     # ---------------------------------------------------------------------------------
     # CHANGE 2: Simplified POST-EXECUTION LOGGING
     # The clients now handle their own specific post-trade actions (like sending notifications).
@@ -196,7 +211,27 @@ def run_live_execution(config, notify_manager: NotificationManager, broker: Brok
     else:
         logging.info(f"Execution Status: {status}. No order executed (no material change or cash/out decision).")
 
-# ==============================================================================
+    # ==========================================================================
+    # --- NEW: SAVE STATE TO DATABASE ---
+    # ==========================================================================
+
+    db_state = {
+        'date': today.strftime('%Y-%m-%d'),
+        'ticker': trade_ticker,
+        'tmom_signal': tmom_sig_today,
+        'sma_signal': sma_sig_today,
+        'target_allocation': float(target_allocation),
+        'allocation_state': alloc_state_str,
+        'executed_qty': float(final_qty),
+        'share_price': float(current_price),
+        'total_equity': float(final_equity),
+        'cash_balance': float(final_cash)
+    }
+
+    db.save_daily_state(db_state)
+    logging.info("Daily state successfully persisted to dpm_live.db")
+
+# =============================================================================
 # --- MAIN EXECUTION ENTRY POINT ---
 # ==============================================================================
 
@@ -218,6 +253,13 @@ def main(config_path: str = 'config.yaml'):
     broker_type = broker_config.get('type', 'mock').lower()
     initial_cash = broker_config.get('initial_cash', 100000.0)
 
+    if config.get('assets'):
+        primary_asset = config['assets'][0]
+        # We prioritize the trade_ticker from the config over the global setting
+        live_ticker = primary_asset.get('trade_ticker', settings.LIVE_TICKER)
+    else:
+        live_ticker = settings.LIVE_TICKER # Fallback
+
     # Instantiate the correct client based on config.yaml
     if broker_type == 'ibkr' and IBKRClient is not None:
         try:
@@ -238,13 +280,19 @@ def main(config_path: str = 'config.yaml'):
         # Boursorama is a mock/notification-only client in this architecture
         broker = BoursoramaBrokerClient(
             initial_cash=initial_cash,
-            notify_manager=notify_manager # Pass the manager to Boursorama for internal notification
+            notify_manager=notify_manager, # Pass the manager to Boursorama for internal notification
+            db_manager=db_manager,
+            live_ticker=live_ticker # <-- PASS THE CORRECT TICKER (LQQ.PA)
         )
         logging.info(f"Using Broker Client: {broker.__class__.__name__}")
 
     else:
         # Default or if type is explicitly 'mock' or client is unavailable
-        broker = MockBrokerClient(initial_cash=initial_cash)
+        broker = MockBrokerClient(
+            initial_cash=initial_cash,
+            db_manager=db_manager,
+            live_ticker=live_ticker # <-- PASS THE CORRECT TICKER (LQQ.PA)
+        )
         logging.info(f"Using Broker Client: {broker.__class__.__name__}")
 
     # 3. Run Execution
