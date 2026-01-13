@@ -76,7 +76,7 @@ class MockBrokerClient(BrokerClient):
              logging.warning("BROKER_DEBUG: Cannot load position state, live_ticker is missing.")
              return
         # --- DEBUG TRACE ADDITION (2a of 2) ---
-        logging.info(f"BROKER_DEBUG: Live Ticker used for lookup: {live_ticker}")
+        #logging.info(f"BROKER_DEBUG: Live Ticker used for lookup: {live_ticker}")
         # --- END DEBUG TRACE ---
 
         # --- 1. Load Cash State from Snapshot (STILL REQUIRED) ---
@@ -84,10 +84,10 @@ class MockBrokerClient(BrokerClient):
 
         if latest_snapshot:
             self._portfolio['cash'] = latest_snapshot['cash_balance']
-            logging.info(f"Broker state loaded cash: ${self._portfolio['cash']:,.2f}")
+            #logging.info(f"Broker state loaded cash: ${self._portfolio['cash']:,.2f}")
         else:
             self._portfolio['cash'] = initial_cash
-            logging.info(f"Broker starting with initial cash: ${initial_cash:,.2f}")
+            #logging.info(f"Broker starting with initial cash: ${initial_cash:,.2f}")
 
         # --- 2. Reconstruct Positions from CUMULATIVE Trades (THE FIX) ---
         # The internal position tracking dictionary is reset on every run:
@@ -103,7 +103,7 @@ class MockBrokerClient(BrokerClient):
         # --- END NEW DEBUG CALL ---
 
         # --- DEBUG TRACE ADDITION (2b of 2) ---
-        logging.info(f"BROKER_DEBUG: Net Qty returned by DBManager: {net_qty}")
+        #logging.info(f"BROKER_DEBUG: Net Qty returned by DBManager: {net_qty}")
         # --- END DEBUG TRACE ---
 
         if net_qty > 0.0:
@@ -114,8 +114,8 @@ class MockBrokerClient(BrokerClient):
             logging.info("Broker confirmed zero net position.")
 
         # --- Final Portfolio State Check ---
-        logging.info(f"BROKER_DEBUG: Final internal cash: {self._portfolio['cash']}")
-        logging.info(f"BROKER_DEBUG: Final internal position: {self._portfolio['positions']}")
+        #logging.info(f"BROKER_DEBUG: Final internal cash: {self._portfolio['cash']}")
+        #logging.info(f"BROKER_DEBUG: Final internal position: {self._portfolio['positions']}")
 
         # --- 3. Now the broker has the correct cash and position state ---
 
@@ -198,8 +198,8 @@ class MockBrokerClient(BrokerClient):
             self.db_manager.save_trade_order(order_data)
 
             # 3. DEBUG TRACE: Immediate Post-Save Dump to Validate Write
-            logging.info("TRADE_SAVE_CONFIRMATION: Dumping DB state immediately after save_trade_order.")
-            self.db_manager.debug_dump_all_state(ticker)
+            #logging.info("TRADE_SAVE_CONFIRMATION: Dumping DB state immediately after save_trade_order.")
+            #self.db_manager.debug_dump_all_state(ticker)
             # --- END DEBUG TRACE ---
 
         return {'status': 'MOCKED', 'action': action, 'quantity': abs(order_qty)}
@@ -238,25 +238,25 @@ class BoursoramaBrokerClient(MockBrokerClient):
         status = order_result.get('status')
 
         # Step 2: Send Notification if a trade occurred (Logic moved from live_engine.py)
-        if status != 'NO_TRADE' and self.notify_manager:
+        #if status != 'NO_TRADE' and self.notify_manager:
 
-            # Recalculate portfolio state based on updated internal state
-            new_qty = self.get_current_position(ticker)
-            new_cash = self.get_current_cash()
-            new_value = new_qty * current_price
-            new_total_equity = new_cash + new_value
+        #    # Recalculate portfolio state based on updated internal state
+        #    new_qty = self.get_current_position(ticker)
+        #    new_cash = self.get_current_cash()
+        #    new_value = new_qty * current_price
+        #    new_total_equity = new_cash + new_value
 
-            subject = f"Boursorama Trade Alert: {ticker} ({status})"
-            body = (
-                f"Trade initiated for {ticker}.\n"
-                f"Target Allocation: {target_allocation:.1%}\n"
-                f"Execution Price: {current_price:.2f}\n"
-                f"New Portfolio State:\n"
-                f"  Cash: ${new_cash:,.2f}\n"
-                f"  Position ({new_qty:.2f} Qty): ${new_value:,.2f}\n"
-                f"  Total Equity: ${new_total_equity:,.2f}"
-            )
-            self.notify_manager.notify(subject, body)
+        #    subject = f"Boursorama Trade Alert: {ticker} ({status})"
+        #    body = (
+        #        f"Trade initiated for {ticker}.\n"
+        #        f"Target Allocation: {target_allocation:.1%}\n"
+        #        f"Execution Price: {current_price:.2f}\n"
+        #        f"New Portfolio State:\n"
+        #        f"  Cash: ${new_cash:,.2f}\n"
+        #        f"  Position ({new_qty:.2f} Qty): ${new_value:,.2f}\n"
+        #        f"  Total Equity: ${new_total_equity:,.2f}"
+        #    )
+        #    self.notify_manager.notify(subject, body)
 
         return order_result
 
@@ -295,115 +295,177 @@ class DataFetcher:
 class SignalGenerator(ABC):
     @abstractmethod
     def compute_signal(self, prices: pd.Series, **kwargs) -> pd.Series:
+        """All signals must accept 'prices' and flexible keyword arguments."""
         pass
 
 class TMOMSignal(SignalGenerator):
-    # lookback is in months
-    def compute_signal(self, prices: pd.Series, rf_rates: pd.Series, lookback: int, **kwargs) -> pd.Series:
-        monthly_prices = prices.resample('ME').last()
-        daily_rf = rf_rates / 252
-        window = min(int(21.5 * lookback), len(daily_rf))
-        cum_rf_12m = ((1 + daily_rf).rolling(window=window).apply(np.prod, raw=True) - 1).resample('ME').last()
-        price_ret = monthly_prices.pct_change(periods=lookback)
-        excess = price_ret - cum_rf_12m
-        signal = (excess > 0).astype(int)
-        return signal.reindex(prices.index, method='ffill').fillna(0)
+    def compute_signal(self, prices: pd.Series, **kwargs) -> pd.Series:
+        rf_rates = kwargs.get('rf_rates')
+        lookback_months = kwargs.get('lookback_months', 12)
+        
+        if rf_rates is None:
+            raise ValueError("TMOMSignal requires 'rf_rates' in kwargs.")
 
+        lookback_days = lookback_months * 21
+        cum_ret = prices.pct_change(lookback_days)
+
+        # FIX: Align the RF rates to the price index to avoid comparison errors
+        # Reindex RF to match prices, then fill gaps
+        rf_aligned = rf_rates.reindex(prices.index).ffill().fillna(0)
+        
+        # Calculate cumulative risk-free return over the window
+        # (Assuming rf_rates is annualized percentage like ^IRX)
+        cum_rf = rf_aligned.rolling(window=lookback_days).sum() / 100.0 / 252 * 21 * lookback_months
+        effective_rf = cum_rf.clip(lower=0) 
+
+        # Now indices match perfectly
+        return (cum_ret > effective_rf).astype(int).fillna(0)
+    
 class SMASignal(SignalGenerator):
-    # sma_period is in days
-    def compute_signal(self, prices: pd.Series, sma_period: int, **kwargs) -> pd.Series:
-        sma = prices.rolling(window=sma_period).mean()
-        signal = (prices > sma).astype(int)
-        return signal.fillna(0)
-
+    def __init__(self):
+        # On initialise une variable pour stocker la série
+        self.sma_series = None    
+        
+    def compute_signal(self, prices: pd.Series, **kwargs) -> pd.Series:
+        # Extract specific parameters from kwargs
+        period = kwargs.get('period', 200)
+        
+        #logging.info(f"DEBUG SMA: Received {len(prices)} points for period {period}")
+        
+        self.sma_series = prices.rolling(window=period).mean()
+        last_values = self.sma_series.tail(5).values
+        #logging.info(f"DEBUG SMA: Last 5 SMA values: {last_values}")
+        
+        #sma = prices.rolling(window=period).mean()
+        #return (prices > sma).astype(int).fillna(0)
+        return (prices > self.sma_series).astype(int).fillna(0)
+    
+class VIXSignal(SignalGenerator):
+    def compute_signal(self, vix_prices: pd.Series, threshold: int = 22) -> pd.Series:
+        # 1 = Quiet/Bullish (VIX < Threshold), 0 = Danger/Bearish (VIX >= Threshold)
+        return (vix_prices < threshold).astype(int).fillna(0)
+    
 class DPMAllocator:
     def __init__(self, signals: Dict[str, SignalGenerator]):
         self.signals = signals
 
-    def allocate(self, signal_prices: pd.DataFrame, rf_rates: pd.Series, tmom_lb: int, sma_p: int, method: str) -> tuple[pd.Series, pd.Series, pd.Series]:
-        """
-        Determines the daily allocation based on TMOM and SMA signals.
-        """
-        # 1. Compute Signals
-        tmom_sig = TMOMSignal().compute_signal(signal_prices, rf_rates=rf_rates, lookback=tmom_lb)
-        sma_sig  = SMASignal().compute_signal(signal_prices, sma_period=sma_p)
-
-        # Re-index and align signals to the daily pricing index
-        daily_tmom_sig = tmom_sig.reindex(signal_prices.index, method='ffill').fillna(0)
-        daily_sma_sig  = sma_sig.reindex(signal_prices.index, method='ffill').fillna(0)
-
-        # 2. Initialization and Setup
-        allocations = pd.Series(0.0, index=signal_prices.index)
-        allocations.iloc[0] = 0.0 # Start with 0 allocation
+    def allocate(self, macro_prices: pd.Series, sma_prices: pd.Series, execution_prices: pd.Series, 
+                 rf_rates: pd.Series, vix_prices: pd.Series, 
+                 tmom_lb: int, sma_p: int, vix_t: int = 22, 
+                 method: str = 'Conditional', use_vix: bool = True) -> tuple:
         
-        # Mapping from allocation float to state key
-        alloc_to_state = {1.0: 'Invested', 0.5: 'Partial', 0.0: 'Cash'}
+        # 1. Generate signals using the Signal Objects
+        # TMOM is computed on Macro (e.g., QQQ)
+        tmom_sig = self.signals['TMOM'].compute_signal(
+            macro_prices, 
+            rf_rates=rf_rates, 
+            lookback_months=tmom_lb
+        )
+        
+        # SMA is computed on the Benchmark (e.g., PUST) as requested
+        sma_sig = self.signals['SMA'].compute_signal(
+            sma_prices, 
+            period=sma_p
+        )
 
-        if method == 'Linear':
-            # Simple linear allocation: (M + S) / 2
-            allocations = (daily_tmom_sig + daily_sma_sig) / 2.0
+        # Ensure vix_data is aligned with the execution index
+        vix_data = vix_prices.reindex(execution_prices.index).ffill()
+        
+        # 2. VIX Logic
+        vix_sig = (vix_data < vix_t).astype(int) if use_vix else pd.Series(1, index=execution_prices.index)
 
-        elif method == 'Conditional':
-            # --- CONDITIONAL STATE MACHINE IMPLEMENTATION ---
-            state_machine = {
-                ('Cash', 0, 0): 0.0, ('Cash', 0, 1): 0.0,
-                ('Cash', 1, 1): 1.0, ('Cash', 1, 0): 0.5,
-                ('Partial', 0, 0): 0.0, ('Partial', 0, 1): 0.0,
-                ('Partial', 1, 1): 1.0, ('Partial', 1, 0): 0.5,
-                ('Invested', 0, 0): 0.0, ('Invested', 0, 1): 0.0,
-                ('Invested', 1, 1): 1.0, ('Invested', 1, 0): 0.5,
-            }
+        tmom_aligned = tmom_sig.reindex(execution_prices.index).ffill()
+        vix_aligned = vix_sig.reindex(execution_prices.index).ffill()
+        sma_aligned = sma_sig.reindex(execution_prices.index).ffill()
+        
+        # --- NEW DEBUG TRACE: CHECK ALIGNMENT ---
+        #logging.info("=" * 30)
+        #logging.info("DEBUG_ALIGNMENT: Inspecting Signal Indices")
+        #logging.info(f"SMA Signal (EU) Tail:\n{sma_sig.tail(3)}")
+        #logging.info(f"TMOM Signal (US) Tail:\n{tmom_sig.tail(3)}")
+        #logging.info(f"VIX Signal (US) Tail:\n{vix_sig.tail(3)}")
+        
+        # Check the raw merge BEFORE fillna(0) hides the NaNs
+        #raw_merge = pd.DataFrame({'sma': sma_sig, 'tmom': tmom_sig, 'vix': vix_sig})
+        #logging.info(f"Merged DataFrame Tail (Before Fill):\n{raw_merge.tail(3)}")
+        #logging.info("=" * 30)
+        # --- END DEBUG TRACE ---
+      
+        # 3. State Machine DataFrame
+        signals_df = pd.DataFrame({
+            'sma': sma_aligned,
+            'tmom': tmom_aligned,
+            'vix': vix_aligned
+        }).fillna(0)
 
-            for i in range(1, len(allocations)):
-                p_prev = allocations.iloc[i-1]
-                p_prev_state = alloc_to_state.get(round(p_prev, 1))
-                s_sig = daily_sma_sig.iloc[i]
-                m_sig = daily_tmom_sig.iloc[i]
-                transition_key = (p_prev_state, s_sig, m_sig)
-                allocations.iloc[i] = state_machine.get(transition_key, 0.0)
+        def get_allocation_logic(row):
+            s, t, v = row['sma'], row['tmom'], row['vix']
+            if not use_vix:
+                if s == 1 and t == 1: return 1.0
+                if s == 1 and t == 0: return 0.5
+                return 0.0
+            else:
+                if v == 0:  # HIGH VIX
+                    if s == 1 and t == 1: return 0.70
+                    if s == 1 and t == 0: return 0.40
+                    if s == 0 and t == 1: return 0.10
+                    return 0.0
+                else:       # LOW VIX
+                    if s == 1 and t == 1: return 1.00
+                    if s == 1 and t == 0: return 0.80
+                    if s == 0 and t == 1: return 0.60
+                    return 0.20
 
+        # 5. Final Calculation
+        if method == 'Conditional':
+            allocations = signals_df.apply(get_allocation_logic, axis=1)
+        elif method == 'Linear':
+            allocations = (tmom_sig + sma_sig) / 2.0
         else:
-            raise ValueError(f"Unknown allocation method: {method}. Must be 'Linear' or 'Conditional'.")
+            raise ValueError(f"Unknown method: {method}")
 
-        return allocations.dropna(), daily_tmom_sig.dropna(), daily_sma_sig.dropna() # <-- RETURN SIGNALS
+        return allocations.dropna(), tmom_sig.dropna(), sma_sig.dropna(), vix_sig.dropna()
 
+    @property
+    def last_sma_value(self):
+        # Access the signal via the 'SMA' key in the signals dictionary
+        sma_obj = self.signals.get('SMA') 
+        if sma_obj and hasattr(sma_obj, 'sma_series') and sma_obj.sma_series is not None:
+            return float(sma_obj.sma_series.iloc[-1])
+        return 0.0    
+    
 class PortfolioSimulator:
     def __init__(self, transaction_cost: float = 0.001, slippage: float = 0.0005):
-        self.transaction_cost = transaction_cost  # Commissions / Fees
-        self.slippage = slippage                  # Price impact / Bid-Ask spread
+        self.transaction_cost = transaction_cost
+        self.slippage = slippage
 
-    def simulate(self, allocations: pd.Series, asset_returns: pd.Series, rf_rates: pd.Series, lag: int = 1):
-        # 1. ALIGN DATA
-        idx = allocations.index.intersection(asset_returns.index).intersection(rf_rates.index)
-        if len(idx) == 0:
-            logging.warning("No overlapping dates — skipping simulation")
-            return pd.DataFrame(index=pd.DatetimeIndex([]))
-
-        # FIX 1: Defined 'lag' in the function signature above.
-        # This shifts the signal by 1 day to account for the US/EU time difference.
-        effective_alloc = allocations.shift(lag).reindex(idx).fillna(0)
-
-        # 2. REALISTIC COST CALCULATION
-        total_friction = self.transaction_cost + self.slippage
-        trade_costs = effective_alloc.diff().abs().fillna(0) * total_friction
-
-        # 3. RETURN CALCULATION
-        # (Exposure * Asset Return) + (Cash * Daily Risk-Free) - Trade Costs
-        port_ret = (effective_alloc * asset_returns) + ((1 - effective_alloc) * (rf_rates/252)) - trade_costs
-
-        equity = (1 + port_ret).cumprod()
-        if len(equity) > 0 and not pd.isna(equity.iloc[0]):
-            equity = equity / equity.iloc[0]
-
-        # FIX 2: Corrected 'alloc' to 'effective_alloc' to match your naming.
-        pos_numeric = (effective_alloc * 2).astype(int)
-
+    def simulate(self, allocations: pd.Series, returns: pd.Series, rf: pd.Series, lag: int = 0) -> pd.DataFrame:
+        """
+        Simulates performance. 
+        lag=0: Trade at 5:20 PM (Same Day).
+        lag=1: Trade at Next Day Open.
+        """
+        # For your 5:20 PM Europe goal, lag MUST stay 0
+        shifted_alloc = allocations.shift(lag).fillna(0)
+        
+        # Calculate strategy returns
+        # (Allocation * Asset Return) + (Cash * Risk Free Rate)
+        portfolio_rets = (shifted_alloc * returns) + ((1 - shifted_alloc) * (rf / 252))
+        
+        # Subtract transaction costs only when allocation changes
+        trades = shifted_alloc.diff().abs().fillna(0)
+        costs = trades * (self.transaction_cost + self.slippage)
+        final_rets = portfolio_rets - costs
+        
+        equity_curve = (1 + final_rets).cumprod()
+        
         return pd.DataFrame({
-            'equity_curve': equity,
-            'position_numeric': pos_numeric,
-            'allocations': effective_alloc
-        }, index=idx)
-
+            'equity_curve': equity_curve,
+            'returns': final_rets,
+            'allocations': shifted_alloc,
+            'position_numeric': shifted_alloc
+        })
+    
 class TradeTracker:
     def __init__(self, asset_name: str):
         self.asset_name = asset_name
@@ -465,7 +527,7 @@ class PerformanceAnalyzer:
         years = (equity.index[-1] - equity.index[0]).days / 365.25
         cagr = (equity.iloc[-1] / equity.iloc[0]) ** (1/years) - 1
         dd = (equity / equity.cummax() - 1).min()
-        ret = equity.pct_change().dropna()
+        ret = equity.pct_change(fill_method=None).dropna()
         volatility = ret.std() * np.sqrt(252)
         sharpe = ret.mean() / ret.std() * np.sqrt(252) if ret.std() != 0 else np.nan
         peaks = equity.cummax()
@@ -650,7 +712,7 @@ class PerformanceAnalyzer:
         return {'Num Trades': float(num_trades), 'Win Trades': win_rate, 'Profit Factor': profit_factor, 'Avg Trade Return': avg_trade_return}
 
     def calculate_monthly_returns(self, equity_curve: pd.Series) -> pd.DataFrame:
-        daily_returns = equity_curve.pct_change().fillna(0)
+        daily_returns = equity_curve.pct_change(fill_method=None).fillna(0)
         monthly_returns = daily_returns.resample('ME').apply(lambda x: (1 + x).prod() - 1)
         monthly_returns_df = monthly_returns.to_frame(name='Monthly Return')
         monthly_returns_df['Year'] = monthly_returns_df.index.year

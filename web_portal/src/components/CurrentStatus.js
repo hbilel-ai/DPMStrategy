@@ -22,6 +22,17 @@ export function renderStateMachine(exposure) {
     `;
 }
 
+export function renderGauge(exposure) {
+    // Map 0.0-1.0 to -90deg to 90deg
+    const rotation = (exposure * 180) - 90;
+    return `
+        <div class="gauge-container">
+            <div class="gauge-arc"></div>
+            <div class="gauge-needle" style="transform: translateX(-50%) rotate(${rotation}deg)"></div>
+        </div>
+    `;
+}
+
 async function fetchData() {
     const card = document.getElementById('current-status');
     if (!card) return;
@@ -30,28 +41,33 @@ async function fetchData() {
         const response = await fetch(API_ENDPOINT);
         const data = await response.json();
 
-        // FIX: Ensure we have the exposure value
-        const exposure = data.exposure !== undefined ? data.exposure : (data.tmom_signal_value + data.sma_signal_value) / 2;
-
         card.innerHTML = `
             <h3>1. Current Status</h3>
-            <div style="font-size: 1.1em; margin-bottom: 15px;">
-                <p>
-                    <strong>Current Signal:</strong>
-                    <span style="color: ${data.action_alert === 'CASH' ? '#ff4d4d' : (data.action_alert === 'LONG' ? 'lightgreen' : 'orange')};">
-                        ${data.action_alert}
-                    </span>
-                </p>
+            
+            <div class="signal-indicators">
+                <div class="sig-btn ${data.tmom_on ? 'sig-on' : 'sig-off'}">TMOM</div>
+                <div class="sig-btn ${data.sma_on ? 'sig-on' : 'sig-off'}">SMA</div>
+                <div class="sig-btn ${data.vix_safe ? 'sig-on' : 'sig-off'}">VIX</div>
             </div>
 
-            ${renderStateMachine(exposure)}
+            ${renderGauge(data.exposure)}
 
-            <div style="margin-top: 15px; font-size: 0.85em; color: #888; text-align: center;">
-                Signals: TMOM (${data.tmom_signal_value}) | SMA (${data.sma_signal_value})
+            <div style="text-align: center; margin-top: -5px; margin-bottom: 15px;">
+                <span style="font-size: 1.5em; font-weight: bold;">${(data.exposure * 100).toFixed(0)}%</span>
+                <p style="font-size: 0.75em; color: #888; margin: 0;">TARGET EXPOSURE</p>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.8em; background: #1e1e1e; padding: 10px; border-radius: 4px;">
+                <div><span style="color: #666;">Ticker:</span> ${data.ticker}</div>
+                <div><span style="color: #666;">Price:</span> ${(data.current_price || 0).toFixed(2)}</div> 
+                <div style="grid-column: span 2; border-top: 1px solid #333; padding-top: 5px; color: var(--primary-color);">
+                    <b>Alert:</b> ${data.action_alert} 
+                </div>
             </div>
         `;
     } catch (error) {
-        card.innerHTML = `<h3>1. Current Status</h3><p style="color:red;">Offline</p>`;
+        console.error("DEBUG_JS_ERROR:", error); // This will show the exact error in F12
+        card.innerHTML = `<p style="color:red;">Error loading status</p>`;
     }
 }
 

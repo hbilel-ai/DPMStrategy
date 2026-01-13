@@ -4,18 +4,22 @@
 
 assets:
   - name: "Nasdaq-100 2x Leveraged"
-    signal_ticker: "QQQ"                    # Used only for TMOM + SMA signals
-    trade_ticker: "LQQ.PA"         # This is what we actually buy/sell (Paris listing)
-    benchmark_ticker: "LQQ.PA"                 # Optional: for comparison in plot
-  - name: "QQQ"
-    signal_ticker: "QQQ"                    # Used only for TMOM + SMA signals
-    trade_ticker: "QQQ"         # This is what we actually buy/sell (Paris listing)
-    benchmark_ticker: "QQQ"                 # Optional: for comparison in plot
-  - name: "SPY"
-    signal_ticker: "SPY"                    # Used only for TMOM + SMA signals
-    trade_ticker: "SPY"         # This is what we actually buy/sell (Paris listing)
-    benchmark_ticker: "SPY"                 # Optional: for comparison in plot
+    macro_ticker: "QQQ"         # TMOM Signal
+    trade_ticker: "LQQ.PA"      # Execution (Trading)
+    sma_ticker: "PUST.PA"       # SMA Signal (Benchmark)
+    benchmark_ticker: "PUST.PA" # Report Comparison
 
+  - name: "QQQ Pure"
+    macro_ticker: "QQQ"
+    trade_ticker: "QQQ"
+    sma_ticker: "QQQ"
+    benchmark_ticker: "QQQ"
+
+  - name: "SPY Pure"
+    macro_ticker: "SPY"
+    trade_ticker: "SPY"
+    sma_ticker: "SPY"
+    benchmark_ticker: "SPY"
 
   # You can add more if you want (e.g. SPY + 2x version)
   # - name: "S&P 500 2x"
@@ -24,14 +28,16 @@ assets:
   #   benchmark_ticker: "SPY"
 
 # Backtest period
-start_date: "2015-01-01"        # FR0010342592 launched in 2010
-end_date: "2025-12-31"
+start_date: "2019-01-01"        # FR0010342592 launched in 2010
+end_date: "2030-01-01"
 
 # Strategy parameters
-run_sweep: True
+run_sweep: False
 lookback: 12
 sma_period: 21
 algo_mode: 'Conditional'
+use_vix: True             # Global toggle: True enables VIX filter, False disables it
+vix_threshold: 18
 
 #--- Best Parameters for Nasdaq-100 2x Leveraged ---
 #  Sharpe: 1.38 | CAGR: 41.64% | MaxDD: -34.63%
@@ -46,6 +52,7 @@ algo_mode: 'Conditional'
 
 tmom_lookbacks: [1, 3, 6, 9, 12, 15]
 sma_periods: [21, 50, 100, 150, 200, 250]
+vix_thresholds: [18, 22, 26, 30]
 
 transaction_cost: 0.006         # 10 bps per rebalance (realistic for ETFs)
 rebalance_freq: 'M'             # 'M' monthly, 'W' weekly, 'D' daily
@@ -55,8 +62,8 @@ clear_cache: true              # Set to true only if you want fresh data
 output_dir: "./results"
 
 # Optional: dry-run trading later (for future broker integration)
-dry_run: true
-broker: "none"                  # Will be "ibkr" or "boursorama" later
+dry_run: false
+broker: "ibkr"                  # Will be "ibkr" or "boursorama" later
 
 # ... (existing config like assets, start_date, etc.)
 
@@ -67,7 +74,7 @@ broker: "none"                  # Will be "ibkr" or "boursorama" later
 # ==============================================================================
 live_broker:
   # Choose the execution method: "mock", "boursorama" (NotificationClient), or "ibkr" (IBKRClient)
-  type: "boursorama" # <--- CHANGE THIS TO "ibkr"
+  type: "ibkr" # <--- CHANGE THIS TO "ibkr"
 
   # Initial cash for *Mock* or *Boursorama* client (ignored by IBKR)
   manual_initial_cash: 1000.0

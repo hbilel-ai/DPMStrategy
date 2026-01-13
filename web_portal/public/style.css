@@ -193,6 +193,13 @@ body {
     border: 1px solid #bee5eb;
 }
 
+.status-partial {
+    background-color: #ff9800; /* Orange for Partial */
+    color: white;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
 /* Base style for the Type badge */
 .type-badge {
     padding: 3px 10px;
@@ -215,4 +222,121 @@ body {
 .type-exit {
     background-color: #dc3545;
     border: 1px solid #bd2130;
+}
+
+/* Dashboard Gauge Container */
+.gauge-container {
+    position: relative;
+    width: 180px;
+    height: 90px;
+    margin: 25px auto 10px auto;
+    overflow: hidden;
+}
+
+.gauge-arc {
+    width: 180px;
+    height: 180px;
+    border-radius: 50%;
+    /* Red to Orange to Green gradient */
+    background: conic-gradient(from 0.75turn at 50% 50%, #ff4d4d 0deg, #ffa500 90deg, #4caf50 180deg);
+    mask: radial-gradient(circle, transparent 65%, black 66%);
+    -webkit-mask: radial-gradient(circle, transparent 65%, black 66%);
+}
+
+.gauge-needle {
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    width: 3px;
+    height: 80px;
+    background: #fff;
+    transform-origin: bottom center;
+    transition: transform 1s ease-out;
+    z-index: 10;
+}
+
+/* Signal Indicator Buttons */
+.signal-indicators {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.sig-btn {
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: bold;
+    text-transform: uppercase;
+    border: 1px solid rgba(255,255,255,0.1);
+}
+
+.sig-on { background-color: #2e7d32; color: white; }
+.sig-off { background-color: #c62828; color: white; }
+
+/* --- Trade Log View Switcher --- */
+.header-with-toggle {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.view-switcher {
+    display: flex;
+    background-color: var(--card-background);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.switch-btn {
+    padding: 8px 16px;
+    border: none;
+    background: transparent;
+    color: var(--text-color);
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.2s ease;
+}
+
+.switch-btn:not(:last-child) {
+    border-right: 1px solid var(--border-color);
+}
+
+.switch-btn.active {
+    background-color: var(--primary-color);
+    color: white;
+    font-weight: bold;
+}
+
+.switch-btn:hover:not(.active) {
+    background-color: #333;
+}
+
+/* --- Ledger Specific Styling --- */
+/* Bold the Total Exposure to make it look like a running balance */
+#journal-table-body td strong {
+    color: var(--primary-color);
+}
+
+/* Ensure Qty Diff stands out */
+.ret-pos {
+    color: #4caf50 !important; /* Brighter green for dark mode */
+}
+
+.ret-neg {
+    color: #ff4d4d !important; /* Brighter red for dark mode */
+}
+
+/* Specific status colors for the FIFO Journal */
+.status-open { background-color: #007bff; color: white; }
+.status-partial { background-color: #ffc107; color: #1e1e1e; }
+.status-closed { background-color: #6c757d; color: white; }
+
+/* Filter Bar Adjustment */
+.filter-group {
+    display: inline-block;
+    margin-right: 20px;
 }

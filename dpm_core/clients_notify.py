@@ -4,6 +4,9 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Dict, Any
 
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
 # Ensure you have the twilio library installed: pip install twilio
 try:
     from twilio.rest import Client
@@ -35,18 +38,33 @@ class EmailNotificationClient(NotificationClient):
         logging.info("EmailNotificationClient initialized.")
 
     def send_notification(self, subject: str, body: str) -> None:
-        """Sends an email notification."""
-        message = f"Subject: {subject}\n\n{body}"
-        context = ssl.create_default_context()
+        """Sends an HTML email notification using MIME with improved SSL/TLS handling."""
         try:
-            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
-                server.starttls(context=context)
-                server.login(self.sender_email, self.sender_password)
-                server.sendmail(self.sender_email, self.recipient_email, message)
+            msg = MIMEMultipart()
+            msg['Subject'] = subject
+            msg['From'] = self.sender_email
+            msg['To'] = self.recipient_email
+            msg.attach(MIMEText(body, 'html'))
+
+            context = ssl.create_default_context()
+
+            # --- LOGIQUE DE CONNEXION CORRIGÉE ---
+            if self.smtp_port == 465:
+                # SSL Direct (Ancien standard, port 465)
+                with smtplib.SMTP_SSL(self.smtp_server, self.smtp_port, context=context) as server:
+                    server.login(self.sender_email, self.sender_password)
+                    server.send_message(msg)
+            else:
+                # STARTTLS (Standard moderne, port 587 ou 25)
+                with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
+                    server.starttls(context=context) # Passage en mode sécurisé
+                    server.login(self.sender_email, self.sender_password)
+                    server.send_message(msg)
+            
             logging.info(f"Successfully sent EMAIL notification to {self.recipient_email}.")
         except Exception as e:
             logging.error(f"Failed to send EMAIL notification: {e}")
-
+            
 class WhatsAppNotificationClient(NotificationClient):
     """Concrete implementation for sending WhatsApp notifications via Twilio."""
     def __init__(self, config: Dict[str, Any]):

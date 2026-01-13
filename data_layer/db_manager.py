@@ -3,6 +3,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.sql import func
+from sqlalchemy.pool import NullPool
 from typing import List, Dict, Any, Tuple
 from datetime import datetime
 import logging
@@ -18,8 +19,11 @@ class DBManager:
     """
     def __init__(self, db_url: str):
         # 1. Initialize DB Engine
-        self.engine = create_engine(db_url)
-
+        self.engine = create_engine(
+            db_url, 
+            poolclass=NullPool, 
+            connect_args={"check_same_thread": False}
+        )
         # 2. Create tables if they don't exist
         Base.metadata.create_all(self.engine)
 
@@ -204,28 +208,22 @@ class DBManager:
 
     def get_net_position_quantity(self, ticker: str) -> float:
         from .models import TradeOrder
-        from sqlalchemy import case, func
+        from sqlalchemy import func
 
         with self.get_session() as session:
-            # --- CRITICAL FIX: Use LIKE for robust string matching ---
-            net_quantity_case = case(
-                (TradeOrder.order_type.like('BUY%'), TradeOrder.quantity),
-                (TradeOrder.order_type.like('SELL%'), -TradeOrder.quantity),
-                (TradeOrder.order_type.like('EXIT%'), -TradeOrder.quantity),
-                else_=0
-            )
-            # --- END CRITICAL FIX ---
-
-            net_position = session.query(
-                func.sum(net_quantity_case)
-            ).filter(
-                TradeOrder.ticker == ticker
-            ).scalar()
-
-            logging.info(f"DB_DEBUG: Aggregating net position for ticker '{ticker}'. Result (scalar): {net_position}")
-
-            return float(net_position) if net_position is not None else 0.0
-
+            # 100% Accuracy Fix: The 'quantity' column already stores 
+            # positive for BUY and negative for SELL/EXIT.
+            # A simple SUM is the only correct way to get the net position.
+            result = session.query(func.sum(TradeOrder.quantity))\
+                            .filter(TradeOrder.ticker == ticker)\
+                            .scalar()
+        
+            # Log the raw calculation for peace of mind
+            net_qty = float(result) if result is not None else 0.0
+            logging.info(f"📊 [DB_SUM] Net Position for {ticker}: {net_qty:.6f}")
+        
+            return net_qty     
+        
     def debug_dump_all_state(self, ticker: str):
         """DEBUG: Dumps critical broker state tables."""
         from .models import TradeOrder, PortfolioSnapshot
@@ -300,33 +298,36 @@ class DBManager:
             "details": "No issues found." if is_consistent else inconsistencies
         }
 
-    def get_latest_market_signal(self, ticker: str = None) -> Dict[str, Any] | None:
-        """
-        Fetches the single latest MarketSignal record from the database.
-        Optionally filters by ticker.
-        """
-        from .models import MarketSignal # Ensure model is imported locally
+    def get_latest_market_signal(self, ticker: str) -> Dict[str, Any]:
+        session = self.get_session()
+        try:
+            # Fetch the most recent signal
+            signal = session.query(MarketSignal).filter(
+                MarketSignal.ticker == ticker
+            ).order_by(MarketSignal.timestamp.desc()).first()
 
-        with self.get_session() as session:
-            query = session.query(MarketSignal).order_by(MarketSignal.timestamp.desc())
-
-            if ticker:
-                query = query.filter(MarketSignal.ticker == ticker)
-
-            latest_signal = query.first()
-
-            if latest_signal:
+            # If a signal exists, return its data; otherwise, return a default safe dictionary
+            if signal:
+                print(f"DEBUG_DB_RAW: Raw DB Object Close Price: {signal.close_price}")
                 return {
-                    "timestamp": latest_signal.timestamp.isoformat(),
-                    "ticker": latest_signal.ticker,
-                    "close_price": float(latest_signal.close_price),
-                    "signal_A_value": float(latest_signal.signal_A_value) if latest_signal.signal_A_value is not None else None,
-                    "signal_B_value": float(latest_signal.signal_B_value) if latest_signal.signal_B_value is not None else None,
-                    "action_alert": latest_signal.action_alert,
-                    "is_live_signal": latest_signal.is_live_signal,
+                    "ticker": signal.ticker,
+                    "timestamp": signal.timestamp.strftime('%Y-%m-%d') if signal.timestamp else "N/A",
+                    "vix_value": float(signal.signal_VIX_value or 0),
+                    "signal_A_value": float(signal.signal_A_value or 0),
+                    "signal_B_value": float(signal.signal_B_value or 0),
+                    "exposure": float(signal.position or 0), # Corrected variable name
+                    "alert": signal.action_alert or "NO_ALERT",
+                    "close_price": float(signal.close_price)
                 }
-            return None
-
+        
+            return {
+                "ticker": ticker,
+                "timestamp": "N/A", "vix_value": 0, "tmom_value": 0, 
+                "sma_value": 0, "exposure": 0, "alert": "NO_DATA"
+            }
+        finally:
+            session.close()
+            
     def get_trade_journal(self, ticker: str = "LQQ.PA") -> List[Dict[str, Any]]:
         """
         Pairs BUY and SELL/EXIT orders to create a Journal view.
@@ -458,3 +459,13 @@ class DBManager:
             return []
         finally:
             session.close()
+
+    def get_raw_executions(self, ticker: str):
+        session = self.get_session()
+        # We MUST order by execution_time so FIFO works correctly
+        orders = session.query(TradeOrder).filter(TradeOrder.ticker == ticker).order_by(TradeOrder.execution_time.asc()).all()
+        return [{
+            "id": o.id, "ticker": o.ticker, "order_type": o.order_type,
+            "quantity": float(o.quantity), "execution_price": float(o.execution_price),
+            "execution_time": o.execution_time # Keep as object for now
+        } for o in orders]

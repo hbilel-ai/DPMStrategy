@@ -25,7 +25,7 @@ class TradeOrder(Base):
     execution_time = Column(DateTime, nullable=False, index=True)
     ticker = Column(String, nullable=False)
     order_type = Column(String, nullable=False) # BUY or SELL
-    quantity = Column(Integer, nullable=False)
+    quantity = Column(Numeric(precision=18, scale=8), nullable=False)
     execution_price = Column(Numeric, nullable=False)
     
     # Simple reference to the signal that triggered this (can be null if manual trade)
@@ -44,6 +44,7 @@ class MarketSignal(Base):
     # Component Signal values
     signal_A_value = Column(Numeric)
     signal_B_value = Column(Numeric)
+    signal_VIX_value = Column(Numeric)
 
     # --- ADD THIS LINE ---
     position = Column(Numeric, default=0.0)

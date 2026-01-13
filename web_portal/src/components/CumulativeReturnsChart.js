@@ -1,17 +1,18 @@
-// Change this to match your actual local API IP if different
+// web_portal/src/components/CumulativeReturnsChart.js
+
 const API_BASE = `http://${window.location.hostname}:8000`;
 const API_ENDPOINT = `${API_BASE}/api/v1/analytics/cumulative_returns`;
 
 let equityChart = null;
 
-// 1. New Broadcast function
+// Broadcast zoom/pan to other charts (SignalPriceChart)
 const broadcastSync = (chart) => {
     window.dispatchEvent(new CustomEvent('sync-charts', {
         detail: { min: chart.scales.x.min, max: chart.scales.x.max, sender: 'equity' }
     }));
 };
 
-// 2. New Listener
+// Listen for sync events from other charts
 window.addEventListener('sync-charts', (e) => {
     if (e.detail.sender !== 'equity' && equityChart) {
         equityChart.options.scales.x.min = e.detail.min;
@@ -22,69 +23,78 @@ window.addEventListener('sync-charts', (e) => {
 
 export function CumulativeReturnsChart() {
     return `
-        <div class="chart-controls" style="margin-bottom: 10px; display: flex; gap: 10px; flex-wrap: wrap;">
+        <div class="chart-controls" style="margin-bottom: 10px; display: flex; gap: 10px; align-items: center;">
             <button class="btn-equity-timeframe" data-days="30">1M</button>
             <button class="btn-equity-timeframe" data-days="180">6M</button>
             <button class="btn-equity-timeframe" data-days="365">1Y</button>
             <button class="btn-equity-timeframe" data-days="3650">ALL</button>
-            <span style="font-size: 0.8em; color: #aaa; align-self: center; margin-left: 10px;">
-                📈 Equity Curve | 🔍 Scroll to Zoom
-            </span>
+            <span id="benchmark-label" style="font-size: 0.8rem; color: #888; margin-left: auto;">Benchmark: --</span>
         </div>
-        <div class="chart-wrapper" style="position: relative; height: 350px; width: 100%;">
-            <div class="chart-container" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: #1a1a1a; padding: 10px; border-radius: 8px; overflow: hidden;">
-                <canvas id="cumulative-returns-chart-canvas"></canvas>
-            </div>
+        <div style="height: 400px; width: 100%;">
+            <canvas id="equityGrowthChart"></canvas>
         </div>
     `;
 }
 
 export async function fetchAndRenderEquity(days = 365) {
-    const chartId = 'cumulative-returns-chart-canvas';
-    const canvas = document.getElementById(chartId);
-    if (!canvas) return;
+    const ctx = document.getElementById('equityGrowthChart');
+    if (!ctx) return;
+
+    // Calculate start_date based on days
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+    const dateStr = startDate.toISOString().split('T')[0];
 
     try {
         const response = await fetch(`${API_ENDPOINT}?days=${days}`);
-        const data = await response.json(); 
-        // Data is now: { strategy: [...], benchmark: [...], benchmark_label: "..." }
+        const data = await response.json();
 
         if (equityChart) {
             equityChart.destroy();
         }
 
-        const ctx = canvas.getContext('2d');
+        document.getElementById('benchmark-label').innerText = `Benchmark: ${data.benchmark_label || 'LQQ.PA'}`;
+
         equityChart = new Chart(ctx, {
             type: 'line',
             data: {
                 datasets: [
                     {
-                        label: 'DPM Strategy',
-                        data: data.strategy.map(d => ({ x: d.date, y: d.equity * 100 })),
-                        borderColor: '#4bc0c0',
-                        backgroundColor: 'rgba(75, 192, 192, 0.1)',
-                        fill: true,
-                        tension: 0.1,
-                        pointRadius: 0
+                        label: 'Strategy (Verified Ledger)',
+                        data: data.strategy.map(p => ({ x: p.date, y: p.equity * 100 })),
+                        borderColor: '#007bff',
+                        backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        fill: false,
+                        tension: 0.1
                     },
                     {
-                        label: `Benchmark (${data.benchmark_label || 'Target'})`,
-                        data: data.benchmark.map(d => ({ x: d.date, y: d.equity * 100 })),
-                        borderColor: '#ff6384',
-                        borderDash: [5, 5], // Dashed line for visual distinction
+                        label: `Benchmark (${data.benchmark_label})`,
+                        data: data.benchmark.map(p => ({ x: p.date, y: p.equity * 100 })),
+                        borderColor: '#6c757d',
+                        borderDash: [5, 5], // Dashed line for benchmark
+                        borderWidth: 1.5,
+                        pointRadius: 0,
                         fill: false,
-                        tension: 0.1,
-                        pointRadius: 0
+                        tension: 0.1
                     }
                 ]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                interaction: { mode: 'index', intersect: false },
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
                 plugins: {
-                    legend: { display: true, labels: { color: '#ccc' } },
+                    legend: {
+                        display: true,
+                        labels: { color: '#ccc', font: { size: 11 } }
+                    },
                     tooltip: {
+                        enabled: true,
                         callbacks: {
                             label: (context) => `${context.dataset.label}: ${context.parsed.y.toFixed(2)}%`
                         }
@@ -93,16 +103,13 @@ export async function fetchAndRenderEquity(days = 365) {
                         zoom: {
                             wheel: { enabled: true },
                             pinch: { enabled: true },
-                            mode: 'x', 
-                            enabled: true, 
+                            mode: 'x',
                             onZoom: ({chart}) => broadcastSync(chart)
                         },
                         pan: {
                             enabled: true,
-                            mode: 'x', 
-                            enabled: true, 
-                            onPan: ({chart}) => broadcastSync(chart),
-                            threshold: 10,
+                            mode: 'x',
+                            onPan: ({chart}) => broadcastSync(chart)
                         }
                     }
                 },
@@ -117,7 +124,7 @@ export async function fetchAndRenderEquity(days = 365) {
                         grid: { color: '#333' },
                         ticks: { 
                             color: '#888',
-                            callback: (value) => value + '%' // Show as percentage
+                            callback: (value) => value + '%' 
                         },
                         title: { display: true, text: 'Cumulative Return (%)', color: '#ccc' }
                     }
@@ -125,14 +132,17 @@ export async function fetchAndRenderEquity(days = 365) {
             }
         });
     } catch (e) {
-        console.error("Equity Chart Error:", e);
+        console.error("Equity Chart Render Error:", e);
     }
 }
 
-// Event Listener for timeframe buttons
+// Global timeframe listener
 document.addEventListener('click', (e) => {
     if (e.target.classList.contains('btn-equity-timeframe')) {
         const days = parseInt(e.target.getAttribute('data-days'));
         fetchAndRenderEquity(days);
     }
 });
+
+// Auto-init for first load
+setTimeout(() => fetchAndRenderEquity(365), 200);

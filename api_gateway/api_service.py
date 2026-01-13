@@ -37,56 +37,65 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/api/v1/performance/summary")
-def get_performance_summary(start_date: str = '2020-01-01'):
-    periodic_r = analytics_service.calculate_periodic_returns(start_date)
-    risk_m = analytics_service.calculate_risk_metrics(start_date)
-    return {**periodic_r, **risk_m}
+# api_gateway/api_service.py
 
-@app.get("/api/v1/charts/returns")
-def get_cumulative_returns_chart_data(days: int = 365):
+@app.get("/api/v1/performance/summary")
+def get_performance_summary(start_date: str = '2000-01-01'):
     """
-    EVOLVED: Fetches timeframe-based cumulative returns for both 
-    the Strategy and the Benchmark defined in config.yaml.
+    Returns verified performance from the portfolio ledger.
     """
-    # 1. Calculate the start date based on the 'days' parameter
-    start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
-    
-    # 2. Extract benchmark ticker from settings (Asset 0)
-    # This ensures it matches your config.yaml: assets[0].benchmark_ticker
-    benchmark_ticker = settings.assets[0].benchmark_ticker if settings.assets else "LQQ.PA"
-    
     try:
-        # 3. Call the evolved service method
-        # Returns: {"strategy": [...], "benchmark": [...], "benchmark_label": "..."}
-        data = analytics_service.get_cumulative_returns(
-            start_date=start_date, 
-            benchmark_ticker=benchmark_ticker
-        )
-        return data
+        periodic_r = analytics_service.calculate_periodic_returns(start_date)
+        risk_m = analytics_service.calculate_risk_metrics(start_date)
+        return {**periodic_r, **risk_m}
     except Exception as e:
-        print(f"API Error in charts/returns: {e}")
+        print(f"API_ERROR: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# REMOVE the duplicate @app.get("/api/v1/analytics/cumulative_returns") 
+# Keep only this one:
+@app.get("/api/v1/analytics/cumulative_returns", response_model=EquityChartResponse)
+def get_cumulative_returns(start_date: str = None, days: int = None):
+    """
+    Unified endpoint for Equity Growth.
+    Priority: start_date > days > default (2000-01-01)
+    """
+    try:
+        if start_date:
+            # Use the explicit date provided (e.g., from the 'ALL' button)
+            calculated_start = start_date
+        elif days:
+            # Calculate date based on range (e.g., 30, 180, 365)
+            calculated_start = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+        else:
+            # Absolute fallback
+            calculated_start = '2000-01-01'
+            
+        return analytics_service.get_cumulative_returns(start_date=calculated_start)
+    except Exception as e:
+        print(f"API_ERROR: Cumulative Returns failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
 @app.get("/api/v1/kpis/current")
 def get_current_kpis(ticker: str = "LQQ.PA"):
     latest_signal = db_manager.get_latest_market_signal(ticker=ticker)
+    
     if not latest_signal:
         return {"error": f"No market signal found for ticker {ticker}."}
 
-    val_a = latest_signal.get('signal_A_value', 0) or 0
-    val_b = latest_signal.get('signal_B_value', 0) or 0
-    exposure = (val_a + val_b) / 2
+    #val_a = latest_signal.get('signal_A_value', 0) or 0
+    #val_b = latest_signal.get('signal_B_value', 0) or 0
+    #exposure = (val_a + val_b) / 2
 
     return {
-        "timestamp": latest_signal['timestamp'],
         "ticker": latest_signal['ticker'],
+        "timestamp": latest_signal['timestamp'],
         "current_price": latest_signal['close_price'],
-        "tmom_signal_value": latest_signal['signal_A_value'],
-        "sma_signal_value": latest_signal['signal_B_value'],
-        "exposure": exposure,
-        "action_alert": latest_signal['action_alert'],
-        "is_live_signal": latest_signal['is_live_signal']
+        "tmom_on": float(latest_signal.get("signal_A_value", 0)) == 1.0,
+        "sma_on": float(latest_signal.get("signal_B_value", 0)) == 1.0,
+        "vix_safe": float(latest_signal.get("vix_value", 0)) == 1.0 ,
+        "exposure": latest_signal["exposure"],
+        "action_alert": latest_signal.get("alert", "N/A")
     }
 
 @app.get("/api/v1/charts/signal_price")
@@ -100,12 +109,6 @@ def get_signal_price_chart_data(ticker: str = "LQQ.PA", start_date: str = '2020-
 def get_trade_log():
     trades = db_manager.get_executed_trades()
     return {"trades": trades, "count": len(trades)}
-
-@app.get("/api/v1/analytics/cumulative_returns", response_model=EquityChartResponse)
-def get_cumulative_returns_data(days: int = 365):
-    start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
-    # This now returns the Dict {'strategy':..., 'benchmark':...}
-    return analytics_service.get_cumulative_returns(start_date=start_date)
 
 @app.get("/api/v1/performance/history")
 def get_performance_history(year: str = "ALL"):
@@ -136,10 +139,21 @@ async def get_trade_journal(ticker: str = "LQQ.PA"):
     print(f"DEBUG_API: Received request for Trade Journal for {ticker}")
     try:
         data = analytics_service.get_trade_journal_data(ticker)
-        print(f"DEBUG_API: Returning {len(data.get('trades', []))} trade records")
+        if data and 'trades' in data:
+            count = len(data['trades'])
+            print(f"DEBUG_API: Returning {count} trade records")
+        
         return data
     except Exception as e:
         print(f"DEBUG_API: Error in Journal API: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- NEW ACCOUNT STATEMENT (LEDGER) ENDPOINT ---
+@app.get("/api/v1/trades/ledger")
+async def get_account_ledger(ticker: str = "LQQ.PA"):
+    try:
+        return analytics_service.get_account_ledger_data(ticker)
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- FIXED AUDIT ENDPOINT ---
