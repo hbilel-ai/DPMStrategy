@@ -160,49 +160,22 @@ class MockBrokerClient(BrokerClient):
         action = "BUY" if order_qty > 0 else "SELL"
         trade_time = datetime.now() # Capture the time for logging and DB write
 
-        # Log the mock order
-        logging.info(
-            f"--- MOCK ORDER EXECUTED ---"
-            f"\n  Date: {trade_time.strftime('%Y-%m-%d %H:%M:%S')}"
-            f"\n  Asset: {ticker}"
-            f"\n  Action: {action} (from {current_qty:.2f} qty to {target_qty:.2f} qty)"
-            f"\n  Order Qty: {abs(order_qty):.2f}"
-            f"\n  At Price: {current_price:.2f}"
-            f"\n  Target Alloc: {target_allocation:.1%}"
-            f"\n---------------------------"
-        )
-
-        # Update mock portfolio state
+        # 1. Update internal mock state
         self._portfolio['positions'][ticker] = target_qty
+        self._portfolio['cash'] += (-order_qty * current_price)
 
-        # Calculate cash change and update
-        cash_change = -order_qty * current_price
-        self._portfolio['cash'] += cash_change
+        # 2. Log for the console
+        logging.info(f"--- MOCK ORDER EXECUTED --- ...")
 
-        # ====================================================================
-        # --- CRITICAL FIX: PERSIST TRADE TO DATABASE & DUMP ---
-        # ====================================================================
-
-        # 1. Prepare trade data for DB persistence
-        order_data = {
-            'execution_time': trade_time,
+        # 3. RETURN the full dictionary so live_engine.py can save it once
+        return {
             'ticker': ticker,
+            'order_type': f"{action} (from {current_qty:.2f} qty to {target_qty:.2f} qty)",
             'quantity': abs(order_qty),
             'price': current_price,
-            'order_type': f"{action} (from {current_qty:.2f} qty to {target_qty:.2f} qty)",
+            'execution_time': trade_time, # <--- Added to match IBKR/DB expectations
             'status': 'FILLED'
         }
-
-        # 2. Save the executed trade record
-        if self.db_manager:
-            self.db_manager.save_trade_order(order_data)
-
-            # 3. DEBUG TRACE: Immediate Post-Save Dump to Validate Write
-            #logging.info("TRADE_SAVE_CONFIRMATION: Dumping DB state immediately after save_trade_order.")
-            #self.db_manager.debug_dump_all_state(ticker)
-            # --- END DEBUG TRACE ---
-
-        return {'status': 'MOCKED', 'action': action, 'quantity': abs(order_qty)}
 
 class BoursoramaBrokerClient(MockBrokerClient):
     """

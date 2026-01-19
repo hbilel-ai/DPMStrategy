@@ -101,8 +101,8 @@ def _generate_strategy_report(data: dict) -> tuple[str, str]:
         f"[3] SIGNAL SCORECARD\n"
         f"{'='*60}\n"
         f"    ● US Momentum (N-1): {'BULLISH [+]' if data['tmom'] else 'BEARISH [-]'}\n"
-        f"    ● EU Trend    (N):   {'BULLISH [+]' if data['sma'] else 'BEARISH [-]'} (Price {data['current_price']:.2f} > SMA {data['sma_val']:.2f})\n"
-        f"    ● Risk Filter (N):   {'SAFE    [+]' if data['vix_sig'] else 'DANGER  [-]'}\n\n"
+        f"    ● EU Trend    (N):   {'BULLISH [+]' if data['sma'] else 'BEARISH [-]'} (Price {data['signal_price']:.2f} {'>' if data['sma'] else '<'} SMA {data['sma_val']:.2f})\n"
+        f"    ● Risk Filter (N):   {'SAFE    [+]' if data['vix_sig'] else 'DANGER  [-]'} (Vix {data['vix_val']:.2f})\n\n"
         f"{'='*60}\n"
         f"[4] EXECUTION DETAILS\n"
         f"{'='*60}\n"
@@ -443,6 +443,7 @@ def run_live_execution(config, notify_manager: NotificationManager, broker: Brok
         'vix_sig': vix_sig_today,
         'vix_val': vix_value_now,
         'current_price': current_trade_price,
+        'signal_price': float(sma_input.iloc[-1]),
         'sma_val': float(sma_obj.sma_series.iloc[-1]),
         'target_alloc': target_allocation,
         'action': 'HOLD' if qty_to_trade == 0 else order_type_final,
