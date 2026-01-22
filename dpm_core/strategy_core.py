@@ -260,6 +260,23 @@ class DataFetcher:
         if len(data) == 0:
             logging.warning(f"No data returned for {asset} — possibly invalid ticker or date range")
         return data
+    
+    def fetch_live_ticker_price(self, ticker: str) -> float:
+        """
+        Fetches the absolute latest price (intraday) for a ticker.
+        Used to ensure VIX and Signal assets are truly 'N' (Live).
+        """
+        try:
+            # We fetch 1-minute data for today to get the most recent 'Close'
+            live_data = yf.download(ticker, period="1d", interval="1m", progress=False)
+            if not live_data.empty:
+                # Handle potential MultiIndex columns from yfinance
+                if isinstance(live_data['Close'], pd.DataFrame):
+                    return float(live_data['Close'].iloc[-1, 0])
+                return float(live_data['Close'].iloc[-1])
+        except Exception as e:
+            logging.error(f"Error fetching live price for {ticker}: {e}")
+        return None
 
     def fetch_risk_free(self, start_date: str, end_date: str) -> pd.Series:
         data = self.fetch_data('^IRX', start_date, end_date)

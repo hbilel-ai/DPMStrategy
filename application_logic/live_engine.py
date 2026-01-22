@@ -100,10 +100,9 @@ def _generate_strategy_report(data: dict) -> tuple[str, str]:
         f"{'='*60}\n"
         f"[3] SIGNAL SCORECARD\n"
         f"{'='*60}\n"
-        f"    ● US Momentum (N-1): {'BULLISH [+]' if data['tmom'] else 'BEARISH [-]'}\n"
-        f"    ● EU Trend    (N):   {'BULLISH [+]' if data['sma'] else 'BEARISH [-]'} (Price {data['signal_price']:.2f} {'>' if data['sma'] else '<'} SMA {data['sma_val']:.2f})\n"
-        f"    ● Risk Filter (N):   {'SAFE    [+]' if data['vix_sig'] else 'DANGER  [-]'} (Vix {data['vix_val']:.2f})\n\n"
-        f"{'='*60}\n"
+        f"    ● US Momentum (N-1): {'BULLISH [+]' if data['tmom'] else 'BEARISH [-]'} (Ref: {data['dates_meta']['macro']})\n"
+        f"    ● EU Trend     (N):   {'BULLISH [+]' if data['sma'] else 'BEARISH [-]'} (Price {data['signal_price']:.2f} {'>' if data['sma'] else '<'} SMA {data['sma_val']:.2f} | Ref: {data['dates_meta']['signal']})\n"
+        f"    ● Risk Filter  (N):   {'SAFE    [+]' if data['vix_sig'] else 'DANGER  [-]'} (Vix {data['vix_val']:.2f} | Ref: {data['dates_meta']['risk']})\n\n"        f"{'='*60}\n"
         f"[4] EXECUTION DETAILS\n"
         f"{'='*60}\n"
         f"    Target Alloc: {data['target_alloc']:.2%}\n"
@@ -174,33 +173,24 @@ def _generate_strategy_report(data: dict) -> tuple[str, str]:
 def validate_and_align_data(m_df, s_df, t_df, v_df, config):
     today = pd.Timestamp(datetime.now().date())
     prev_bus_day = today - pd.tseries.offsets.BusinessDay(1)
-
-    # --- TRACE 2: CALENDAR ALIGNMENT ---
-    logging.info(f"DEBUG ALIGNMENT: Wall Clock: {today.date()} | Expected N-1: {prev_bus_day.date()}")
     
-    # Get tickers from config
-    asset_cfg = config['assets'][0]
-    trade_ticker = asset_cfg.get('trade_ticker')
-    sma_ticker = asset_cfg.get('sma_ticker')
-    macro_ticker = asset_cfg.get('macro_ticker')
+    # Identify the actual dates being used from the DataFrame indices
+    # This ensures the logs match the strategy data perfectly.
+    actual_dates = {
+        'macro': m_df.index[-1].strftime('%Y-%m-%d'),
+        'signal': s_df.index[-1].strftime('%Y-%m-%d'),
+        'risk': v_df.index[-1].strftime('%Y-%m-%d')
+    }
 
-    # 1. US Momentum (Lagged N-1)
-    # Ensure it ends on the previous business day
-    if m_df.index[-1] < prev_bus_day:
-        logging.warning(f"DATA GAP: {macro_ticker} is behind. Last: {m_df.index[-1].date()}")
+    logging.info(f"--- [PHASE 2: TIMING ALIGNMENT AUDIT] ---")
+    logging.info(f"DEBUG ALIGNMENT MAP:")
+    logging.info(f"    > Macro Component (TMOM) | Source Date: {actual_dates['macro']}")
+    logging.info(f"    > Signal Component (SMA) | Source Date: {actual_dates['signal']}")
+    logging.info(f"    > Risk Component (VIX)   | Source Date: {actual_dates['risk']}")
+
+    # Proceed with slicing logic as before...
     macro_out = m_df[m_df.index <= prev_bus_day]['Close']
-
-    # 2. European / Trade Assets (Real-time N)
-    # We expect these to have been patched with TODAY'S date
-    for name, df in [(sma_ticker, s_df), (trade_ticker, t_df)]:
-        if df.index[-1] < today:
-            logging.warning(f"MISSING LIVE PATCH: {name} ends at {df.index[-1].date()}, expected {today.date()}")
-
-    # --- TRACE 3: SLICING RESULTS ---
-    logging.info(f"DEBUG SLICE: Macro input ends on {macro_out.index[-1].date() if not macro_out.empty else 'N/A'}")
-    
-    # If the patch is missing, we use what we have, but the warning alerts the user
-    return macro_out, s_df['Close'], t_df['Close'], v_df['Close']
+    return macro_out, s_df['Close'], t_df['Close'], v_df['Close'], actual_dates
 
 def run_live_execution(config, notify_manager: NotificationManager, broker: BrokerClient, db_manager: DBManager):
     
@@ -252,59 +242,41 @@ def run_live_execution(config, notify_manager: NotificationManager, broker: Brok
     signal_end_date = today.strftime('%Y-%m-%d')
     start = config.get('start_date', '2015-01-01')
 
-    # Fetch Dataframes
+    # 2. FETCH RAW DATA
     m_df = fetcher.fetch_data(macro_t, start, signal_end_date)
     s_df = fetcher.fetch_data(sma_t, start, signal_end_date)
     t_df = fetcher.fetch_data(trade_t, start, today_str)
     v_df = fetcher.fetch_data('^VIX', start, signal_end_date)
     rf_rates = fetcher.fetch_risk_free(start, signal_end_date)
 
-    if m_df.empty or s_df.empty or v_df.empty:
-        logging.error("Incomplete data from YFinance. Aborting execution.")
-        return
+    # --- UPDATED LIVE PRICE INJECTION (Includes VIX) ---
+    # We now patch SMA, Trade Asset, and VIX with real-time intraday prices
+    patch_targets = [
+        (sma_t, 'SMA'), 
+        (trade_t, 'TRADE'), 
+        ("^VIX", 'VIX')
+    ]
 
-    # --- TRACE 1: RAW FETCH VERIFICATION ---
-    #for name, df in [(macro_t, m_df), (sma_t, s_df), (trade_t, t_df), ("VIX", v_df)]:
-    #    if not df.empty:
-    #        logging.info(f"DEBUG RAW FETCH: {name} | Start: {df.index[0].date()} | End: {df.index[-1].date()} | Count: {len(df)}")
-    #    else:
-    #        logging.error(f"DEBUG RAW FETCH: {name} is EMPTY")
+    for ticker, label in patch_targets:
+        live_p = fetcher.fetch_live_ticker_price(ticker)
+        if live_p:
+            new_row = pd.DataFrame({'Close': [live_p]}, index=[pd.Timestamp(today.date())])
+            new_row.index.name = 'Date'
+            
+            if label == 'SMA':
+                s_df = pd.concat([s_df, new_row])
+                s_df = s_df[~s_df.index.duplicated(keep='last')].sort_index()
+            elif label == 'TRADE':
+                t_df = pd.concat([t_df, new_row])
+                t_df = t_df[~t_df.index.duplicated(keep='last')].sort_index()
+            elif label == 'VIX':
+                v_df = pd.concat([v_df, new_row])
+                v_df = v_df[~v_df.index.duplicated(keep='last')].sort_index()
+                logging.info(f"LIVE VIX UPDATE: Patched with current price: {live_p:.2f}")
 
-    # --- IMPROVED LIVE PRICE INJECTION (Independent Tickers) ---
-    for ticker, df_ref in [(sma_t, s_df), (trade_t, t_df)]:
-        try:
-            #logging.info(f"DEBUG PATCH: Fetching live price for {ticker}...")
-            live_data = yf.download(ticker, period='1d', interval='1m', progress=False)
+    # 3. ALIGN AND VALIDATE
+    macro_input, sma_input, trade_input, vix_input, dates_meta = validate_and_align_data(m_df, s_df, t_df, v_df, config)
         
-            if not live_data.empty:
-                # FIX: Ensure we get a single float value, handling MultiIndex if necessary
-                if isinstance(live_data['Close'], pd.DataFrame):
-                    live_p = float(live_data['Close'].iloc[-1, 0]) # Get first column of last row
-                else:
-                    live_p = float(live_data['Close'].iloc[-1])
-            
-                # Create a clean single-value DataFrame for the patch
-                new_row = pd.DataFrame({'Close': [live_p]}, index=[pd.Timestamp(today.date())])
-                new_row.index.name = 'Date'
-
-                if ticker == sma_t:
-                    s_df = pd.concat([s_df, new_row])
-                    # Clean up: ensure the index is unique and sorted
-                    s_df = s_df[~s_df.index.duplicated(keep='last')].sort_index()
-                    #logging.info(f"DEBUG PATCH: Injected {live_p:.2f} into SMA series ({ticker})")
-                else:
-                    t_df = pd.concat([t_df, new_row])
-                    t_df = t_df[~t_df.index.duplicated(keep='last')].sort_index()
-                    #logging.info(f"DEBUG PATCH: Injected {live_p:.2f} into TRADE series ({ticker})")
-            
-            else:
-                logging.warning(f"DEBUG PATCH: No live data for {ticker}. Siganl/Trade will be STALE.")
-            
-        except Exception as e:
-            logging.error(f"DEBUG PATCH ERROR for {ticker}: {str(e)}")
-        
-    macro_input, sma_input, trade_input, vix_input = validate_and_align_data(m_df, s_df, t_df, v_df, config)
-    
     # --- HYBRID ALIGNMENT DEBUG TRACES ---
     #logging.info("====================================================")
     #logging.info("DEBUG: INPUT DATA ALIGNMENT VERIFICATION")
@@ -444,6 +416,7 @@ def run_live_execution(config, notify_manager: NotificationManager, broker: Brok
         'vix_val': vix_value_now,
         'current_price': current_trade_price,
         'signal_price': float(sma_input.iloc[-1]),
+        'dates_meta': dates_meta,
         'sma_val': float(sma_obj.sma_series.iloc[-1]),
         'target_alloc': target_allocation,
         'action': 'HOLD' if qty_to_trade == 0 else order_type_final,

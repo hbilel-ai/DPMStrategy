@@ -207,6 +207,34 @@ def main(config_path: str = 'config.yaml'):
             dashboard_export.to_csv(os.path.join(out_dir, export_name))
             logging.info(f"✨ Dashboard Export saved: {export_name}")
 
+            # --- CONSOLIDATED SIGNAL & VALUE AUDIT ---
+            last_dt = common[-1]
+            prev_dt = common[-2]
+            
+            # 1. VIX Alignment (N-1)
+            # vix_data_n1 is pre-shifted globally
+            final_vix_val = vix_data_n1.loc[last_dt]
+            
+            # 2. SMA Alignment (N)
+            final_eu_price = sma_prices.loc[last_dt]
+            # Use raw data for the rolling mean to ensure a full window is available
+            final_sma_val = s_prices_raw.rolling(window=single_sma_p).mean().loc[last_dt]
+            
+            # 3. Momentum Alignment (N-1)
+            tmom_curr_p = macro_prices_n1.loc[last_dt]
+            # macro_prices_n1 is already shifted(1). 
+            # We shift by the lookback to find the reference price (N - 1 - lookback)
+            tmom_lag_p = macro_prices_n1.shift(single_tmom_lb * 21).loc[last_dt]
+            tmom_perf = (tmom_curr_p / tmom_lag_p - 1)
+
+            logging.info(f"--- [FINAL BACKTEST AUDIT: TIMING & VALUES] ---")
+            logging.info(f"    ● Target Execution Date (N):   {last_dt.date()}")
+            logging.info(f"    ------------------------------------------------")
+            logging.info(f"    ● US Momentum (N-1) | Ref: {prev_dt.date()} | Perf: {tmom_perf:.2%} (Price: {tmom_curr_p:.2f})")
+            logging.info(f"    ● EU SMA Trend (N)  | Ref: {last_dt.date()} | Price: {final_eu_price:.2f} vs SMA: {final_sma_val:.2f}")
+            logging.info(f"    ● VIX Risk (N-1)    | Ref: {prev_dt.date()} | Value: {final_vix_val:.2f}")
+            logging.info(f"    ------------------------------------------------")
+            
             # --- PLOT REPORT ---
             benchmark_ticker = asset_cfg.get('benchmark_ticker', asset_cfg['macro_ticker'])
             b_prices = fetcher.fetch_data(benchmark_ticker, start, end)['Close']
