@@ -1,0 +1,33 @@
+services:
+  ib-gateway:
+    image: gnzsnz/ib-gateway:latest
+    container_name: ib-gateway
+    restart: always
+    shm_size: '2gb'
+    ports:
+      #- "7496:4004" # live
+      - "7496:4004" # paper
+      - "5900:5900"  # VNC port for initial manual setup
+    environment:
+      - TWS_USERID=hmida8885
+      - TWS_PASSWORD=Hondash8588!
+      - VNC_SERVER_PASSWORD=secret_vnc_pass
+      #- TRADING_MODE=paper
+      - TRADING_MODE=paper
+      # Align the internal API port with what Socat expects (4002)
+      - API_PORT=4002
+      - SOCAT_PORT=4004
+      #- API_PORT=4002
+      #- SOCAT_PORT=4004
+      - READ_ONLY_API=no             # Corrected variable name
+      - TWS_ACCEPT_INCOMING_CONNECTION=yes
+      - IBC_OPTS=-Djava.awt.headless=false
+      - AUTO_RESTART_TIME=02:00:00  # Sets the daily maintenance to 2 AM (Europe/Paris)
+      - AUTO_RESTART_EXIT=no        # Tells Docker NOT to kill the container during maintenance
+      - TZ=Europe/Paris
+    volumes:
+      - ./ibkr_config:/home/ibgateway/Jts/config:z
+      - ./ibc_logs:/home/ibgateway/ibc/logs:z
+      # CHANGE: Move the mapping to a specific subfolder or map individual files
+      - ./ibkr_settings/jts.ini:/home/ibgateway/Jts/jts.ini:z
+

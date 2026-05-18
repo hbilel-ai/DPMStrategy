@@ -466,9 +466,15 @@ def main(config_path: str = 'config.yaml'):
 
     if b_type == 'ibkr' and IBKRClient:
        # Extract settings from config
-        host = broker_cfg.get('host', '127.0.0.1')
-        port = broker_cfg.get('port', 7497)
-        c_id = broker_cfg.get('client_id', 1)
+        ibkr_settings = broker_cfg.get('ibkr', {})
+        # 2. Now, get the port from THAT sub-dictionary
+        host = ibkr_settings.get('host', '127.0.0.1')
+        port = ibkr_settings.get('port', 7497) # Now this will find 7496!
+        c_id = ibkr_settings.get('client_id', 1)
+
+        #host = broker_cfg.get('host', '127.0.0.1')
+        #port = broker_cfg.get('port', 7497)
+        #c_id = broker_cfg.get('client_id', 1)
         
         # Instantiate the new wrapper class
         try:

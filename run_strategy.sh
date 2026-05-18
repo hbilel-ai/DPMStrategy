@@ -1,6 +1,6 @@
 #!/bin/bash
 # Aller dans le dossier du projet
-cd /home/haithem/Documents/perso/bourse/strategy/DPMStrategy
+cd /home/hbilel/Documents/perso/bourse/strategy/DPMStrategy
 
 # Définir l'heure de Paris pour le script (important pour le log)
 export TZ="Europe/Paris"

@@ -81,7 +81,7 @@ live_broker:
 
   ibkr:
     host: "127.0.0.1"
-    port: 7497 # TWS/Gateway Port (7496 for paper, 7497 for live). IMPORTANT: Use the correct one.
+    port: 7496
     client_id: 1 # Must be a unique integer for this application instance
 
 # ==============================================================================
